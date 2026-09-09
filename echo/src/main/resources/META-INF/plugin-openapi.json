@@ -1,0 +1,40 @@
+{
+  "openapi": "3.0.1",
+  "paths": {
+    "/api/echo/v1/ping": {
+      "get": {
+        "summary": "回声",
+        "operationId": "ping",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PingResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/echo/v1/version": {
+      "get": {
+        "summary": "版本信息",
+        "operationId": "version",
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PingResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string", "example": "pong" },
+          "userId": { "type": "integer", "format": "int64", "nullable": true }
+        }
+      }
+    }
+  }
+}

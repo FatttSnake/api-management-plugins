@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="#fff" stroke="#fff">
+  <g id="static-elements">
+    <circle cx="256" cy="256" r="96" fill="none" stroke-width="12" stroke-dasharray="40 20" />
+    <line x1="60" y1="256" x2="176" y2="256" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="60" cy="256" r="16" class="logo-color"/>
+    <line x1="336" y1="256" x2="452" y2="256" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="452" cy="256" r="16" class="logo-color"/>
+    <circle cx="256" cy="256" r="32" class="logo-color"/>
+  </g>
+  <g id="animation-layer" opacity="1">
+    <circle r="10">
+      <animateMotion
+        dur="3s"
+        repeatCount="indefinite"
+        path="M 352 256 A 96 96 0 1 1 160 256 A 96 96 0 1 1 352 256"
+      />
+    </circle>
+  </g>
+</svg>
