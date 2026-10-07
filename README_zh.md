@@ -29,6 +29,16 @@ api-management-plugins/
 │     ├─ kotlin/com/example/echo/   # EchoController(v1) / EchoControllerV2(v2) / EchoService / EchoLifecycle
 │     └─ resources/META-INF/
 │        └─ plugin-openapi.json     # OpenAPI 文档片段（可选；描述符/公钥/签名由插件生成）
+├─ filebox/                     # 数据与文件示例插件（独立 Gradle 工程）
+│  ├─ build.gradle.kts          # 同上（pluginId = filebox）
+│  ├─ settings.gradle.kts       # rootProject.name = filebox-plugin
+│  ├─ keys/                     # 首次 build 自动生成
+│  └─ src/main/
+│     ├─ kotlin/com/example/filebox/  # FileboxController / FileboxService / FileboxRepository
+│     │                               # / FileboxSchema / FileboxLifecycle
+│     └─ resources/META-INF/
+│        ├─ plugin-config.json      # 配置声明：普通项 / 布尔开关 / number / secret / 数据源声明 ×2
+│        └─ plugin-openapi.json     # OpenAPI 文档片段
 ├─ docs/logo.svg                # 项目 Logo
 ├─ GUIDE.md                     # 插件开发指南（EN）
 ├─ GUIDE_zh.md                  # 插件开发指南（简体中文）
@@ -62,7 +72,49 @@ api-management-plugins/
 示例响应（`/api/echo/v2/ping`）：
 
 ```json
-{ "code": 0, "success": true, "msg": "OK", "data": { "message": "pong", "version": 2, "userId": 1 } }
+{ "code": 0, "success": true, "msg": "success", "data": { "message": "pong", "version": 2, "userId": 1 } }
+```
+
+# 示例插件 `filebox/`
+
+一个「文件盒」插件：文件存在**插件自己的独立数据源**里（元数据）与**插件自己的文件区**里（字节），演示配置声明、一个插件多个数据源、以及两种文件寻址方式。
+
+| 演示点 | 实现 |
+|---|---|
+| 配置声明 | `META-INF/plugin-config.json`：number / boolean / text / secret 四种类型 + 默认值回落 + 两条数据源声明 |
+| 一个插件两个数据源 | 文件行进 `main`——MySQL，由管理员用普通配置项描述；快照进 `cache`——SQLite，网关**零配置**供给（`data/db/plugin/filebox/cache.db`）。装完 `context.datasources["cache"]` 即可用，`["main"]` 等 host 填上就有；DDL 跨 MySQL / SQLite 可移植 |
+| 连接改完自动生效 | 填上 `main` 的配置后网关**自动重挂载**插件（连接是它构建的），**没有一步 reload**；保存前还能先试连（详见 [GUIDE_zh.md](GUIDE_zh.md) §6.3、§8） |
+| 位置寻址 + 免登外链 | `saveFile` / `loadFile` / `fileExternalUrl`：上传、下载、外链、删除 |
+| 内容寻址 + 去重 | `saveContent` / `loadContent` / `existsContent`：同一段文本只存一份，响应里的 `deduplicated` 表示命中了已有对象 |
+| 配置即时生效 | 关掉 `allowSnapshot` 后快照接口立刻返回未启用，**无需重新挂载** |
+| 生命周期 | `FileboxLifecycle` 在 `onInstall` / `onStart` 建表并写运行态设置 |
+
+安装、配置后调用（Basic 认证 `accessKey:secretKey`）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/filebox/v1/upload` | multipart 上传，返回文件 ID 与存储路径 |
+| GET | `/api/filebox/v1/files` | 当前调用者的文件列表 |
+| GET | `/api/filebox/v1/files/{id}` | 下载原样字节（透传，不带响应信封） |
+| GET | `/api/filebox/v1/files/{id}/link` | 生成免登外链，`ttlHours` 缺省时取配置项 `defaultLinkTtlHours` |
+| DELETE | `/api/filebox/v1/files/{id}` | 删除元数据与字节，已发外链随之失效 |
+| POST | `/api/filebox/v1/snapshots` | 存文本快照（内容寻址），相同内容只存一份 |
+| GET | `/api/filebox/v1/snapshots/{contentKey}` | 按 SHA-256 读回文本 |
+
+快照那条数据源**装完即用**，什么都不用配。文件那条需要一个 MySQL 库，用配置接口填一次即生效（详见 [GUIDE_zh.md](GUIDE_zh.md) §6.3、§8）：
+
+```shell
+GET  /system/api/plugin/filebox/config
+# datasources: [ {name:"main", dbType:"MYSQL", required:true, configured:false, keys:[db.host, ...]},
+#               {name:"cache", dbType:"SQLITE", required:false, configured:true, keys:[]} ]
+
+# 先试连，再保存——保存后无需任何 reload。保存按分组写，没传的键等于不做决定
+POST /system/api/plugin/filebox/config/datasource/test
+     {"name":"main","values":[{"key":"db.host","value":"10.0.0.240"},{"key":"db.name","value":"filebox"}]}
+PUT  /system/api/plugin/config
+     {"pluginId":"filebox","groups":[{"key":"db","values":[
+        {"key":"db.host","value":"10.0.0.240"},{"key":"db.name","value":"filebox"},
+        {"key":"db.user","value":"filebox"},{"key":"db.password","value":"…"}]}]}
 ```
 
 # 快速开始
@@ -91,7 +143,7 @@ cd echo
 POST /system/api/plugin/key   { "publicKey": "<...>", "alias": "你的名字" }
 
 # 2. 上传安装
-POST /system/api/plugin/install   (multipart: file=@echo-1.0.0.jar)
+POST /system/api/plugin/install   (multipart: file=@echo-1.0.0.jar，最大 50 MB)
 
 # 3. 授权给 API 账户
 POST /user/api/key   { "permissionCodes": ["api:echo:v1:ping", "api:echo:v1:version", "api:echo:v2:ping", "api:echo:v2:whoami"] }

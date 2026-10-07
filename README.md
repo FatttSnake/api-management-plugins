@@ -29,6 +29,16 @@ api-management-plugins/
 │     ├─ kotlin/com/example/echo/   # EchoController(v1) / EchoControllerV2(v2) / EchoService / EchoLifecycle
 │     └─ resources/META-INF/
 │        └─ plugin-openapi.json     # OpenAPI fragment (optional; descriptor/pub key/signature are generated)
+├─ filebox/                     # data & file example plugin (standalone Gradle project)
+│  ├─ build.gradle.kts          # same as above (pluginId = filebox)
+│  ├─ settings.gradle.kts       # rootProject.name = filebox-plugin
+│  ├─ keys/                     # auto-generated on first build
+│  └─ src/main/
+│     ├─ kotlin/com/example/filebox/  # FileboxController / FileboxService / FileboxRepository
+│     │                               # / FileboxSchema / FileboxLifecycle
+│     └─ resources/META-INF/
+│        ├─ plugin-config.json      # config declaration: plain fields, boolean, number, secret, datasources
+│        └─ plugin-openapi.json     # OpenAPI fragment
 ├─ docs/logo.svg                # project logo
 ├─ GUIDE.md                     # plugin development guide (EN)
 ├─ GUIDE_zh.md                  # plugin development guide (简体中文)
@@ -62,7 +72,50 @@ Once installed and granted, call it with Basic auth (`accessKey:secretKey`):
 Sample response (`/api/echo/v2/ping`):
 
 ```json
-{ "code": 0, "success": true, "msg": "OK", "data": { "message": "pong", "version": 2, "userId": 1 } }
+{ "code": 0, "success": true, "msg": "success", "data": { "message": "pong", "version": 2, "userId": 1 } }
+```
+
+# Example plugin `filebox/`
+
+A "file box" plugin: metadata lives in the **plugin's own datasources** and bytes in the **plugin's own file area**, demonstrating configuration declaration, several named datasources and both file addressing modes.
+
+| Demo point | Implementation |
+|---|---|
+| Config declaration | `META-INF/plugin-config.json`: number / boolean / text / secret, defaults resolved by fallback, plus two datasource declarations |
+| Two datasources in one plugin | File rows go to `main`, a **MySQL** database the administrator describes with ordinary config fields; snapshots go to `cache`, a **SQLite** one the gateway supplies with **nothing to configure** (`data/db/plugin/filebox/cache.db`). `context.datasources["cache"]` is there on install, `["main"]` once its host is filled in |
+| Connecting takes effect by itself | Filling in `main` remounts the plugin on its own, because the gateway is what builds the connection - **no reload endpoint to call**, and a connection can be tried before saving (see [GUIDE.md](GUIDE.md) §6.3, §8) |
+| Location addressing + login-free links | `saveFile` / `loadFile` / `fileExternalUrl`: upload, download, link, delete |
+| Content addressing + dedup | `saveContent` / `loadContent` / `existsContent`: identical text is stored once, and `deduplicated` says an existing object was reused |
+| Config takes effect at once | Turning `allowSnapshot` off makes the snapshot endpoint answer immediately - **no remount** |
+| Lifecycle | `FileboxLifecycle` creates the tables in `onInstall` / `onStart` and records runtime settings |
+
+Once installed and configured, call it with Basic auth (`accessKey:secretKey`):
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/filebox/v1/upload` | multipart upload, returns the file ID and storage path |
+| GET | `/api/filebox/v1/files` | files of the current caller |
+| GET | `/api/filebox/v1/files/{id}` | raw bytes (pass-through, no response envelope) |
+| GET | `/api/filebox/v1/files/{id}/link` | mint a login-free link; `ttlHours` defaults to the `defaultLinkTtlHours` setting |
+| DELETE | `/api/filebox/v1/files/{id}` | delete metadata and bytes; links already handed out stop working |
+| POST | `/api/filebox/v1/snapshots` | store a text snapshot (content-addressed); identical text is stored once |
+| GET | `/api/filebox/v1/snapshots/{contentKey}` | read text back by its SHA-256 |
+
+The snapshots work as soon as the plugin is installed - their datasource needs nothing configured. Files need one MySQL database described through the config endpoint, and saving it is all it takes (see [GUIDE.md](GUIDE.md) §6.3, §8):
+
+```shell
+GET  /system/api/plugin/filebox/config
+# datasources: [ {name:"main", dbType:"MYSQL", required:true, configured:false, keys:[db.host, ...]},
+#               {name:"cache", dbType:"SQLITE", required:false, configured:true, keys:[]} ]
+
+# Try the connection, then save it - no reload afterwards. A save is written a group at a
+# time, and a key left out is one nothing is decided about
+POST /system/api/plugin/filebox/config/datasource/test
+     {"name":"main","values":[{"key":"db.host","value":"10.0.0.240"},{"key":"db.name","value":"filebox"}]}
+PUT  /system/api/plugin/config
+     {"pluginId":"filebox","groups":[{"key":"db","values":[
+        {"key":"db.host","value":"10.0.0.240"},{"key":"db.name","value":"filebox"},
+        {"key":"db.user","value":"filebox"},{"key":"db.password","value":"…"}]}]}
 ```
 
 # Quick start
@@ -91,7 +144,7 @@ cd echo
 POST /system/api/plugin/key   { "publicKey": "<...>", "alias": "Your name" }
 
 # 2. Upload and install
-POST /system/api/plugin/install   (multipart: file=@echo-1.0.0.jar)
+POST /system/api/plugin/install   (multipart: file=@echo-1.0.0.jar, at most 50 MB)
 
 # 3. Grant APIs to an API account
 POST /user/api/key   { "permissionCodes": ["api:echo:v1:ping", "api:echo:v1:version", "api:echo:v2:ping", "api:echo:v2:whoami"] }

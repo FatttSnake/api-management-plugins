@@ -1,0 +1,239 @@
+{
+  "openapi": "3.0.1",
+  "paths": {
+    "/api/filebox/v1/upload": {
+      "post": {
+        "summary": "上传文件",
+        "operationId": "upload",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "description": "上传令牌，仅在插件配置中设置了 uploadToken 时需要",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                },
+                "required": ["file"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FileResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/filebox/v1/files": {
+      "get": {
+        "summary": "文件列表",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FileListResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/filebox/v1/files/{id}": {
+      "get": {
+        "summary": "下载文件",
+        "operationId": "download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "文件字节，类型按文件名推断",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "删除文件",
+        "operationId": "remove",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/filebox/v1/files/{id}/link": {
+      "get": {
+        "summary": "生成外链",
+        "operationId": "link",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "ttlHours",
+            "in": "query",
+            "required": false,
+            "description": "外链有效期（小时），缺省取插件配置 defaultLinkTtlHours",
+            "schema": { "type": "integer", "format": "int64" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LinkResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/filebox/v1/snapshots": {
+      "post": {
+        "summary": "保存文本快照",
+        "operationId": "snapshot",
+        "parameters": [
+          {
+            "name": "text",
+            "in": "query",
+            "required": true,
+            "description": "文本内容，按 SHA-256 内容寻址存储",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SnapshotResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/filebox/v1/snapshots/{contentKey}": {
+      "get": {
+        "summary": "读取文本快照",
+        "operationId": "readSnapshot",
+        "parameters": [
+          {
+            "name": "contentKey",
+            "in": "path",
+            "required": true,
+            "description": "内容 SHA-256",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "FileResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer", "example": 0 },
+          "success": { "type": "boolean", "example": true },
+          "msg": { "type": "string", "example": "success" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "example": "0b0e6d2e-6a3f-4d3a-9a1e-2c0e1f5b7a11" },
+              "name": { "type": "string", "example": "report.pdf" },
+              "size": { "type": "integer", "format": "int64", "example": 20480 },
+              "path": { "type": "string", "example": "files/1/0b0e6d2e-....pdf" },
+              "createTime": { "type": "integer", "format": "int64", "example": 1790000000000 }
+            }
+          }
+        }
+      },
+      "FileListResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer", "example": 0 },
+          "success": { "type": "boolean", "example": true },
+          "msg": { "type": "string", "example": "success" },
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FileResponse/properties/data" }
+          }
+        }
+      },
+      "LinkResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer", "example": 0 },
+          "success": { "type": "boolean", "example": true },
+          "msg": { "type": "string", "example": "success" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "example": "https://api.example.com/public/storage/filebox/files/1/xxx.pdf?e=1790003600&s=..."
+              },
+              "expiresInHours": { "type": "integer", "format": "int64", "example": 1 },
+              "notice": { "type": "string", "nullable": true },
+              "warning": { "type": "string" }
+            }
+          }
+        }
+      },
+      "SnapshotResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer", "example": 0 },
+          "success": { "type": "boolean", "example": true },
+          "msg": { "type": "string", "example": "success" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "contentKey": { "type": "string", "example": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
+              "size": { "type": "integer", "format": "int64", "example": 4 },
+              "deduplicated": { "type": "boolean", "example": false }
+            }
+          }
+        }
+      }
+    }
+  }
+}

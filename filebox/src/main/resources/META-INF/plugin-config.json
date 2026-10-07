@@ -1,0 +1,125 @@
+{
+  "datasources": [
+    {
+      "name": "main",
+      "dbType": "mysql",
+      "required": true,
+      "host": "db.host",
+      "port": "db.port",
+      "database": "db.name",
+      "username": "db.user",
+      "password": "db.password",
+      "params": "db.params"
+    },
+    {
+      "name": "cache",
+      "dbType": "sqlite"
+    }
+  ],
+  "groups": [
+    {
+      "key": "db",
+      "title": "数据库",
+      "description": "文件元数据所在的 MySQL 库；未配置时插件仍会挂载，并在接口上报告该数据源不可用",
+      "fields": [
+        {
+          "key": "db.host",
+          "type": "string",
+          "title": "主机",
+          "description": "IPv6 地址直接填写即可，无需方括号",
+          "maxLength": 255,
+          "default": "localhost",
+          "placeholder": "Host / IPv4 / IPv6"
+        },
+        {
+          "key": "db.port",
+          "type": "number",
+          "title": "端口",
+          "description": "留空则用驱动默认值 3306",
+          "default": 3306,
+          "minimum": 1,
+          "maximum": 65535,
+          "integer": true
+        },
+        {
+          "key": "db.name",
+          "type": "string",
+          "title": "库名",
+          "maxLength": 100
+        },
+        {
+          "key": "db.user",
+          "type": "string",
+          "title": "用户名",
+          "maxLength": 100
+        },
+        {
+          "key": "db.password",
+          "type": "secret",
+          "title": "密码",
+          "description": "接口不回传明文，只以 hasValue 表示是否已设置；保存时不带本项表示保持原值，留空表示清除"
+        },
+        {
+          "key": "db.params",
+          "type": "string",
+          "title": "驱动参数",
+          "description": "key=value，多个用 & 分隔；网关以连接属性下发，不接受 allowLoadLocalInfile / autoDeserialize 等危险项",
+          "maxLength": 500
+        }
+      ]
+    },
+    {
+      "key": "share",
+      "title": "分享设置",
+      "description": "外链与分享相关",
+      "fields": [
+        {
+          "key": "defaultLinkTtlHours",
+          "type": "number",
+          "title": "外链默认有效期（小时）",
+          "description": "生成外链未指定有效期时使用；超过网关上限会被钳制",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 168,
+          "integer": true
+        },
+        {
+          "key": "publicNotice",
+          "type": "text",
+          "title": "分享提示语",
+          "description": "生成外链时原样回显",
+          "maxLength": 200
+        },
+        {
+          "key": "allowSnapshot",
+          "type": "boolean",
+          "title": "启用文本快照",
+          "description": "关闭后快照接口立即返回未启用，无需重新挂载插件",
+          "default": true
+        }
+      ]
+    },
+    {
+      "key": "advanced",
+      "title": "高级设置",
+      "fields": [
+        {
+          "key": "maxFileSizeMb",
+          "type": "number",
+          "title": "单文件大小上限（MB）",
+          "description": "网关本身限制单请求 50MB",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 50,
+          "integer": true
+        },
+        {
+          "key": "uploadToken",
+          "type": "secret",
+          "title": "上传令牌",
+          "description": "配置后上传必须携带同名 token 参数；网关加密存储，接口不回传明文"
+        }
+      ]
+    }
+  ]
+}
