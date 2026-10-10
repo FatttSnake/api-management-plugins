@@ -1,5 +1,5 @@
 {
-  "openapi": "3.0.1",
+  "openapi": "3.1.2",
   "paths": {
     "/api/echo/v1/ping": {
       "get": {
@@ -24,6 +24,38 @@
         "operationId": "version",
         "responses": { "200": { "description": "OK" } }
       }
+    },
+    "/api/echo/v2/ping": {
+      "get": {
+        "summary": "回声 v2",
+        "operationId": "ping",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EchoV2Response" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/echo/v2/whoami": {
+      "get": {
+        "summary": "当前调用者",
+        "operationId": "whoami",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WhoamiResponse" }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -31,8 +63,23 @@
       "PingResponse": {
         "type": "object",
         "properties": {
-          "message": { "type": "string", "example": "pong" },
-          "userId": { "type": "integer", "format": "int64", "nullable": true }
+          "message": { "type": "string", "examples": ["pong"] },
+          "userId": { "type": ["integer", "null"], "format": "int64" }
+        }
+      },
+      "EchoV2Response": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string", "examples": ["pong"] },
+          "version": { "type": "integer", "examples": [2] },
+          "userId": { "type": ["integer", "null"], "format": "int64" }
+        }
+      },
+      "WhoamiResponse": {
+        "type": "object",
+        "properties": {
+          "userId": { "type": ["integer", "null"], "format": "int64" },
+          "accessKeyId": { "type": ["string", "null"] }
         }
       }
     }

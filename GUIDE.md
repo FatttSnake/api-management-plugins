@@ -231,11 +231,11 @@ The gateway derives `keyId` from the public key automatically (SHA-256 of the SP
 
 ## 5. OpenAPI documentation
 
-An optional hand-written resource `src/main/resources/META-INF/plugin-openapi.json` (an OpenAPI 3.0 fragment) describes parameters and data structures for the gateway to show end users. Fragment from `echo/`:
+An optional hand-written resource `src/main/resources/META-INF/plugin-openapi.json` (an OpenAPI 3.1 fragment) describes parameters and data structures for the gateway to show end users. Fragment from `echo/`:
 
 ```json
 {
-  "openapi": "3.0.1",
+  "openapi": "3.1.2",
   "paths": {
     "/api/echo/v1/ping": {
       "get": {
@@ -259,8 +259,8 @@ An optional hand-written resource `src/main/resources/META-INF/plugin-openapi.js
       "PingResponse": {
         "type": "object",
         "properties": {
-          "message": { "type": "string", "example": "pong" },
-          "userId": { "type": "integer", "format": "int64", "nullable": true }
+          "message": { "type": "string", "examples": ["pong"] },
+          "userId": { "type": ["integer", "null"], "format": "int64" }
         }
       }
     }
@@ -271,6 +271,8 @@ An optional hand-written resource `src/main/resources/META-INF/plugin-openapi.js
 - Use the full public path `/api/{plugin}/v{version}/...` as the `paths` key (identical to the call URL);
 - Stored verbatim into `t_s_api_plugin.openapi` on install;
 - Served to the front end by `GET /user/api/docs` (list) / `GET /user/api/docs/{pluginId}` (detail);
+- **The fragment is an OpenAPI 3.1 document**, so its Schema Objects follow JSON Schema 2020-12: use `examples: [value]` (an array) instead of `example`, express nullability with a `type` array (`"type": ["integer", "null"]`), and mark binary payloads with `contentMediaType` (e.g. `application/octet-stream`) instead of `format: binary`;
+- One fragment covers all of a plugin's endpoints — it may document several API versions (e.g. both `/api/echo/v1/...` and `/api/echo/v2/...`);
 - **Missing it does not block install**: the docs endpoint still returns the API list, it just lacks parameter/structure details.
 
 ---
