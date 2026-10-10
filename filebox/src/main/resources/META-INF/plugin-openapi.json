@@ -1,5 +1,5 @@
 {
-  "openapi": "3.0.1",
+  "openapi": "3.1.2",
   "paths": {
     "/api/filebox/v1/upload": {
       "post": {
@@ -21,7 +21,7 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "file": { "type": "string", "format": "binary" }
+                  "file": { "type": "string", "contentMediaType": "application/octet-stream" }
                 },
                 "required": ["file"]
               }
@@ -73,7 +73,7 @@
             "description": "文件字节，类型按文件名推断",
             "content": {
               "application/octet-stream": {
-                "schema": { "type": "string", "format": "binary" }
+                "schema": { "type": "string", "contentMediaType": "application/octet-stream" }
               }
             }
           }
@@ -171,17 +171,17 @@
       "FileResponse": {
         "type": "object",
         "properties": {
-          "code": { "type": "integer", "example": 0 },
-          "success": { "type": "boolean", "example": true },
-          "msg": { "type": "string", "example": "success" },
+          "code": { "type": "integer", "examples": [0] },
+          "success": { "type": "boolean", "examples": [true] },
+          "msg": { "type": "string", "examples": ["success"] },
           "data": {
             "type": "object",
             "properties": {
-              "id": { "type": "string", "example": "0b0e6d2e-6a3f-4d3a-9a1e-2c0e1f5b7a11" },
-              "name": { "type": "string", "example": "report.pdf" },
-              "size": { "type": "integer", "format": "int64", "example": 20480 },
-              "path": { "type": "string", "example": "files/1/0b0e6d2e-....pdf" },
-              "createTime": { "type": "integer", "format": "int64", "example": 1790000000000 }
+              "id": { "type": "string", "examples": ["0b0e6d2e-6a3f-4d3a-9a1e-2c0e1f5b7a11"] },
+              "name": { "type": "string", "examples": ["report.pdf"] },
+              "size": { "type": "integer", "format": "int64", "examples": [20480] },
+              "path": { "type": "string", "examples": ["files/1/0b0e6d2e-....pdf"] },
+              "createTime": { "type": "integer", "format": "int64", "examples": [1790000000000] }
             }
           }
         }
@@ -189,9 +189,9 @@
       "FileListResponse": {
         "type": "object",
         "properties": {
-          "code": { "type": "integer", "example": 0 },
-          "success": { "type": "boolean", "example": true },
-          "msg": { "type": "string", "example": "success" },
+          "code": { "type": "integer", "examples": [0] },
+          "success": { "type": "boolean", "examples": [true] },
+          "msg": { "type": "string", "examples": ["success"] },
           "data": {
             "type": "array",
             "items": { "$ref": "#/components/schemas/FileResponse/properties/data" }
@@ -201,18 +201,18 @@
       "LinkResponse": {
         "type": "object",
         "properties": {
-          "code": { "type": "integer", "example": 0 },
-          "success": { "type": "boolean", "example": true },
-          "msg": { "type": "string", "example": "success" },
+          "code": { "type": "integer", "examples": [0] },
+          "success": { "type": "boolean", "examples": [true] },
+          "msg": { "type": "string", "examples": ["success"] },
           "data": {
             "type": "object",
             "properties": {
               "url": {
                 "type": "string",
-                "example": "https://api.example.com/public/storage/filebox/files/1/xxx.pdf?e=1790003600&s=..."
+                "examples": ["https://api.example.com/public/storage/filebox/files/1/xxx.pdf?e=1790003600&s=..."]
               },
-              "expiresInHours": { "type": "integer", "format": "int64", "example": 1 },
-              "notice": { "type": "string", "nullable": true },
+              "expiresInHours": { "type": "integer", "format": "int64", "examples": [1] },
+              "notice": { "type": ["string", "null"] },
               "warning": { "type": "string" }
             }
           }
@@ -221,15 +221,15 @@
       "SnapshotResponse": {
         "type": "object",
         "properties": {
-          "code": { "type": "integer", "example": 0 },
-          "success": { "type": "boolean", "example": true },
-          "msg": { "type": "string", "example": "success" },
+          "code": { "type": "integer", "examples": [0] },
+          "success": { "type": "boolean", "examples": [true] },
+          "msg": { "type": "string", "examples": ["success"] },
           "data": {
             "type": "object",
             "properties": {
-              "contentKey": { "type": "string", "example": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
-              "size": { "type": "integer", "format": "int64", "example": 4 },
-              "deduplicated": { "type": "boolean", "example": false }
+              "contentKey": { "type": "string", "examples": ["9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"] },
+              "size": { "type": "integer", "format": "int64", "examples": [4] },
+              "deduplicated": { "type": "boolean", "examples": [false] }
             }
           }
         }

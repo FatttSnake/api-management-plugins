@@ -230,11 +230,11 @@ POST /system/api/plugin/key
 
 ## 5. OpenAPI 文档配置
 
-可选的手写资源 `src/main/resources/META-INF/plugin-openapi.json`（OpenAPI 3.0 片段），描述参数与数据结构，供网关给最终用户展示。`echo/` 的片段：
+可选的手写资源 `src/main/resources/META-INF/plugin-openapi.json`（OpenAPI 3.1 片段），描述参数与数据结构，供网关给最终用户展示。`echo/` 的片段：
 
 ```json
 {
-  "openapi": "3.0.1",
+  "openapi": "3.1.2",
   "paths": {
     "/api/echo/v1/ping": {
       "get": {
@@ -258,8 +258,8 @@ POST /system/api/plugin/key
       "PingResponse": {
         "type": "object",
         "properties": {
-          "message": { "type": "string", "example": "pong" },
-          "userId": { "type": "integer", "format": "int64", "nullable": true }
+          "message": { "type": "string", "examples": ["pong"] },
+          "userId": { "type": ["integer", "null"], "format": "int64" }
         }
       }
     }
@@ -270,6 +270,8 @@ POST /system/api/plugin/key
 - `paths` 的 key 用完整公开路径 `/api/{plugin}/v{version}/...`（与调用 URL 一致）；
 - 安装时原样存入 `t_s_api_plugin.openapi`；
 - `GET /user/api/docs`（列表）/ `GET /user/api/docs/{pluginId}`（详情）返回给前端；
+- **片段是 OpenAPI 3.1 文档**，其 Schema 遵循 JSON Schema 2020-12：示例用 `examples: [值]`（数组）而非 `example`，可空用 `type` 数组表达（`"type": ["integer", "null"]`），二进制载荷用 `contentMediaType`（如 `application/octet-stream`）而非 `format: binary`；
+- 一个片段覆盖该插件的全部接口，可同时描述多个 API 版本（如 `/api/echo/v1/...` 与 `/api/echo/v2/...`）；
 - **缺省不影响安装**：文档端点仍返回接口列表，只是缺少参数/结构详情。
 
 ---
