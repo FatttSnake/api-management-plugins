@@ -28,7 +28,7 @@ A plugin project then resolves them by adding `mavenLocal()` under `pluginManage
 ```
 Plugin project (standalone Gradle build)           Gateway (api-management-backend)
 ┌──────────────────────────────────────┐        ┌──────────────────────────────────────────┐
-│ Kotlin sources + manual OpenAPI      │ upload │ PluginSigner.verify (integrity)          │
+│ Kotlin sources (incl. response DTOs) │ upload │ PluginSigner.verify (integrity)          │
 │ (build.gradle.kts declares apiPlugin)│──────▶│ Trust store check (pub key keyId         │
 │                                      │        │   present & enabled)                     │
 │ The Gradle plugin does at            │        │ Child-first ClassLoader loads jar        │
@@ -61,7 +61,7 @@ geo/
 ├─ keys/            # auto-generated on first build (never commit private.pem)
 └─ src/main/
    ├─ kotlin/com/example/geo/GeoController.kt    # your @ApiController
-   └─ resources/META-INF/plugin-openapi.json     # OpenAPI fragment (optional)
+   └─ kotlin/com/example/geo/GeoResponses.kt     # response DTOs (docs are generated from them)
 ```
 
 ### 2.1 `settings.gradle.kts`
@@ -231,49 +231,45 @@ The gateway derives `keyId` from the public key automatically (SHA-256 of the SP
 
 ## 5. OpenAPI documentation
 
-An optional hand-written resource `src/main/resources/META-INF/plugin-openapi.json` (an OpenAPI 3.1 fragment) describes parameters and data structures for the gateway to show end users. Fragment from `echo/`:
+**There is no hand-written OpenAPI fragment to maintain.** On every mount, the gateway generates an OpenAPI 3.1 fragment (`paths` + `components.schemas`) by reflecting over your controllers, stores it on the plugin row, and serves it to end users through `GET /user/api/docs/{pluginId}`. The fragment comes from the same reflection the gateway mounts the endpoints from, so it cannot drift from your `@Operation` / `@GetMapping` declarations.
 
-```json
-{
-  "openapi": "3.1.2",
-  "paths": {
-    "/api/echo/v1/ping": {
-      "get": {
-        "summary": "Echo",
-        "operationId": "ping",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/PingResponse" }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "PingResponse": {
-        "type": "object",
-        "properties": {
-          "message": { "type": "string", "examples": ["pong"] },
-          "userId": { "type": ["integer", "null"], "format": "int64" }
-        }
-      }
-    }
-  }
-}
+To make it complete, express the details in code:
+
+### 5.1 Return a concrete type, not a `Map`
+
+`ApiResponse<Map<String, Any?>>` can only generate an open object, `{"type":"object","additionalProperties":{}}` — a map's keys are not knowable at runtime. Declare a DTO instead:
+
+```kotlin
+// GeoResponses.kt
+data class GeocodeResponse(
+    @field:Schema(description = "Formatted address", example = "…") val address: String,
+    @field:Schema(description = "Latitude") val latitude: Double?,
+    @field:Schema(description = "Longitude") val longitude: Double?
+)
+
+// GeoController.kt
+@Operation(summary = "Geocode", description = "Resolve an address to coordinates", operationId = "geocode")
+@GetMapping("/geocode")
+fun geocode(@RequestParam("address") address: String): ApiResponse<GeocodeResponse> =
+    ApiResponse.ok(geocodeService.geocode(address))
 ```
 
-- Use the full public path `/api/{plugin}/v{version}/...` as the `paths` key (identical to the call URL);
-- Stored verbatim into `t_s_api_plugin.openapi` on install;
-- Served to the front end by `GET /user/api/docs` (list) / `GET /user/api/docs/{pluginId}` (detail);
-- **The fragment is an OpenAPI 3.1 document**, so its Schema Objects follow JSON Schema 2020-12: use `examples: [value]` (an array) instead of `example`, express nullability with a `type` array (`"type": ["integer", "null"]`), and mark binary payloads with `contentMediaType` (e.g. `application/octet-stream`) instead of `format: binary`;
-- One fragment covers all of a plugin's endpoints — it may document several API versions (e.g. both `/api/echo/v1/...` and `/api/echo/v2/...`);
-- **Missing it does not block install**: the docs endpoint still returns the API list, it just lacks parameter/structure details.
+The generated `data` is then the `GeocodeResponse` schema, with each field's type, description and nullability. **Watch the wire format**: the DTO's field names and reachability have to match the map keys they replace.
+
+### 5.2 Parameters, body, descriptions
+
+- `@PathVariable` / `@RequestParam` / `@RequestHeader` / `@CookieValue` on a method parameter become `parameters` (`in` and `required` come from the annotation; an unnamed one takes its Kotlin parameter name);
+- `@RequestBody` becomes a JSON `requestBody`; `@RequestPart` becomes `multipart/form-data`, one property per part;
+- Add prose with the swagger annotations: `@Parameter(description = ..., example = ...)` on a parameter, `@field:Schema(description = ..., example = ...)` on a DTO field;
+- `operationId` / `summary` / `description` come from the method's `@Operation` (`operationId` is still the endpoint's persisted identity, and is required).
+
+### 5.3 How it is generated
+
+- The `paths` key is the full public path `/api/{plugin}/v{version}/...`, identical to the call URL;
+- The fragment is OpenAPI 3.1, so its Schema Objects follow JSON Schema 2020-12: nullability is a type union (`"type": ["integer", "null"]`), examples are a `examples: [value]` array, and binary payloads use `contentMediaType`;
+- A `ApiResponse<T>` return is inlined (`code`/`success`/`msg`/`data`) with `data` being `T`'s schema; `ResponseEntity<ByteArray>` becomes `application/octet-stream`; `Unit`/`void` yields a 200 response with no `content`;
+- One fragment covers all of a plugin's endpoints, across every `@ApiController` version (v1/v2 included);
+- **A generation failure does not block install**: the docs endpoint still returns the API list, the plugin just lacks parameter/structure details, and the gateway logs a WARN.
 
 ---
 

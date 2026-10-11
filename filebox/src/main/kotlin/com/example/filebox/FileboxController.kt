@@ -57,11 +57,11 @@ class FileboxController(
     fun upload(
         @RequestPart("file") file: MultipartFile,
         @RequestParam("token", required = false) token: String?
-    ): ApiResponse<Map<String, Any?>> = reply {
+    ): ApiResponse<FileResponse> = reply {
         val ownerId = requireUser()
         fileboxService.verifyUploadToken(token)
 
-        ApiResponse.ok(fileboxService.upload(ownerId, file.originalFilename ?: "file", file.bytes).toMap())
+        ApiResponse.ok(fileboxService.upload(ownerId, file.originalFilename ?: "file", file.bytes).toResponse())
     }
 
     /**
@@ -74,10 +74,10 @@ class FileboxController(
      */
     @Operation(summary = "文件列表", description = "查询插件独立数据源中当前调用者的文件", operationId = "list")
     @GetMapping("/files")
-    fun list(): ApiResponse<List<Map<String, Any?>>> = reply {
+    fun list(): ApiResponse<List<FileResponse>> = reply {
         val ownerId = requireUser()
 
-        ApiResponse.ok(fileboxService.list(ownerId).map(FileboxFile::toMap))
+        ApiResponse.ok(fileboxService.list(ownerId).map(FileboxFile::toResponse))
     }
 
     /**
@@ -126,16 +126,16 @@ class FileboxController(
     fun link(
         @PathVariable id: String,
         @RequestParam(name = "ttlHours", required = false) ttlHours: Long?
-    ): ApiResponse<Map<String, Any?>> = reply {
+    ): ApiResponse<LinkResponse> = reply {
         val ownerId = requireUser()
         val (url, hours) = fileboxService.externalUrl(ownerId, id, ttlHours)
 
         ApiResponse.ok(
-            mapOf(
-                "url" to url,
-                "expiresInHours" to hours,
-                "notice" to fileboxService.publicNotice(),
-                "warning" to "外链是免登凭证，持有者在过期前均可访问，且无法提前吊销"
+            LinkResponse(
+                url = url,
+                expiresInHours = hours,
+                notice = fileboxService.publicNotice(),
+                warning = "外链是免登凭证，持有者在过期前均可访问，且无法提前吊销"
             )
         )
     }
@@ -151,11 +151,11 @@ class FileboxController(
      */
     @Operation(summary = "删除文件", description = "删除元数据与原样字节，已发出的外链随之失效", operationId = "remove")
     @DeleteMapping("/files/{id}")
-    fun remove(@PathVariable id: String): ApiResponse<Map<String, Any?>> = reply {
+    fun remove(@PathVariable id: String): ApiResponse<RemoveResponse> = reply {
         val ownerId = requireUser()
         fileboxService.delete(ownerId, id)
 
-        ApiResponse.ok(mapOf("id" to id, "deleted" to true))
+        ApiResponse.ok(RemoveResponse(id = id, deleted = true))
     }
 
     /**
@@ -173,17 +173,11 @@ class FileboxController(
         operationId = "snapshot"
     )
     @PostMapping("/snapshots")
-    fun snapshot(@RequestParam("text") text: String): ApiResponse<Map<String, Any?>> = reply {
+    fun snapshot(@RequestParam("text") text: String): ApiResponse<SnapshotResponse> = reply {
         val ownerId = requireUser()
         val result = fileboxService.snapshot(ownerId, text)
 
-        ApiResponse.ok(
-            mapOf(
-                "contentKey" to result.contentKey,
-                "size" to result.size,
-                "deduplicated" to result.deduplicated
-            )
-        )
+        ApiResponse.ok(result.toResponse())
     }
 
     /**
@@ -197,13 +191,13 @@ class FileboxController(
      */
     @Operation(summary = "读取文本快照", description = "按内容 SHA-256 读回文本", operationId = "readSnapshot")
     @GetMapping("/snapshots/{contentKey}")
-    fun readSnapshot(@PathVariable contentKey: String): ApiResponse<Map<String, Any?>> = reply {
+    fun readSnapshot(@PathVariable contentKey: String): ApiResponse<ReadSnapshotResponse> = reply {
         val ownerId = requireUser()
 
         ApiResponse.ok(
-            mapOf(
-                "contentKey" to contentKey,
-                "text" to fileboxService.readSnapshot(ownerId, contentKey)
+            ReadSnapshotResponse(
+                contentKey = contentKey,
+                text = fileboxService.readSnapshot(ownerId, contentKey)
             )
         )
     }

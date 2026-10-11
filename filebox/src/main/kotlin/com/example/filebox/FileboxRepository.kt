@@ -39,22 +39,7 @@ data class FileboxFile(
      * Upload time, in epoch milliseconds
      */
     val createTime: Long
-) {
-    /**
-     * Build the API representation
-     *
-     * @return File fields
-     * @author FatttSnake, fatttsnake@gmail.com
-     * @since 1.0.0
-     */
-    fun toMap(): Map<String, Any?> = mapOf(
-        "id" to id,
-        "name" to name,
-        "size" to size,
-        "path" to path,
-        "createTime" to createTime
-    )
-}
+)
 
 /**
  * Filebox snapshot metadata

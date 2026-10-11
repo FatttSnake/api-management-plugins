@@ -26,19 +26,17 @@ api-management-plugins/
 │  ├─ settings.gradle.kts       # pluginManagement 含 mavenLocal（解析 Gradle 插件/SDK）
 │  ├─ keys/                     # 首次 build 自动生成（private.pem 勿提交）
 │  └─ src/main/
-│     ├─ kotlin/com/example/echo/   # EchoController(v1) / EchoControllerV2(v2) / EchoService / EchoLifecycle
-│     └─ resources/META-INF/
-│        └─ plugin-openapi.json     # OpenAPI 文档片段（可选；描述符/公钥/签名由插件生成）
+│     └─ kotlin/com/example/echo/   # EchoController(v1) / EchoControllerV2(v2) / EchoService
+│                                   # / EchoLifecycle / EchoResponses（响应 DTO，文档由其生成）
 ├─ filebox/                     # 数据与文件示例插件（独立 Gradle 工程）
 │  ├─ build.gradle.kts          # 同上（pluginId = filebox）
 │  ├─ settings.gradle.kts       # rootProject.name = filebox-plugin
 │  ├─ keys/                     # 首次 build 自动生成
 │  └─ src/main/
 │     ├─ kotlin/com/example/filebox/  # FileboxController / FileboxService / FileboxRepository
-│     │                               # / FileboxSchema / FileboxLifecycle
+│     │                               # / FileboxSchema / FileboxLifecycle / FileboxResponses
 │     └─ resources/META-INF/
-│        ├─ plugin-config.json      # 配置声明：普通项 / 布尔开关 / number / secret / 数据源声明 ×2
-│        └─ plugin-openapi.json     # OpenAPI 文档片段
+│        └─ plugin-config.json      # 配置声明：普通项 / 布尔开关 / number / secret / 数据源声明 ×2
 ├─ docs/logo.svg                # 项目 Logo
 ├─ GUIDE.md                     # 插件开发指南（EN）
 ├─ GUIDE_zh.md                  # 插件开发指南（简体中文）
@@ -57,7 +55,7 @@ api-management-plugins/
 | 控制器 / 版本共存 | `EchoController`(v1)、`EchoControllerV2`(v2)——同一插件内滚动兼容 |
 | 业务 bean 注入 | `EchoService`（构造函数注入） |
 | 生命周期钩子 | `EchoLifecycle`（`installedAt`/`startedAt`/`stoppedAt`/`uninstalledAt` 写入插件级设置） |
-| 描述符 / 文档 | `apiPlugin {}` 生成 `api-plugin.json` + 手写 `plugin-openapi.json` |
+| 描述符 / 文档 | `apiPlugin {}` 生成 `api-plugin.json`；OpenAPI 文档由网关在挂载时从控制器与响应 DTO 生成 |
 | 密钥 / 签名 | `genPluginKeys` 自动生成 + `signPlugin` 构建期签名 |
 
 安装并授权后可调用（Basic 认证 `accessKey:secretKey`）：

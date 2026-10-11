@@ -28,7 +28,7 @@ Gradle 插件与 SDK 从**网关仓库**一起构建发布。首次使用前先�
 ```
 插件工程（独立 Gradle build）                   网关（api-management-backend）
 ┌──────────────────────────────────┐        ┌──────────────────────────────────────────┐
-│ Kotlin 源码 + 手动 OpenAPI 片段   │ 上传   │ PluginSigner.verify（签名完整性）          │
+│ Kotlin 源码（含响应 DTO）         │ 上传   │ PluginSigner.verify（签名完整性）          │
 │ (build.gradle.kts 声明 apiPlugin)│──────▶│ 信任库校验（公钥 keyId 在库且启用）         │
 │                                  │        │ 子优先 ClassLoader 加载 jar               │
 │ Gradle 插件在 build 期自动完成：   │        │ 子容器 GenericApplicationContext         │
@@ -60,7 +60,7 @@ geo/
 ├─ keys/            # 首次 build 自动生成（private.pem 勿提交）
 └─ src/main/
    ├─ kotlin/com/example/geo/GeoController.kt   # 你的 @ApiController 控制器
-   └─ resources/META-INF/plugin-openapi.json    # OpenAPI 文档片段（可选）
+   └─ kotlin/com/example/geo/GeoResponses.kt    # 响应 DTO（文档由网关从它们生成）
 ```
 
 ### 2.1 `settings.gradle.kts`
@@ -228,51 +228,47 @@ POST /system/api/plugin/key
 
 ---
 
-## 5. OpenAPI 文档配置
+## 5. OpenAPI 文档
 
-可选的手写资源 `src/main/resources/META-INF/plugin-openapi.json`（OpenAPI 3.1 片段），描述参数与数据结构，供网关给最终用户展示。`echo/` 的片段：
+**不需要手写 OpenAPI 片段。** 网关在每次挂载插件时，从你的控制器反射生成一份 OpenAPI 3.1 片段（`paths` + `components.schemas`），写入插件记录，并由 `GET /user/api/docs/{pluginId}` 给最终用户展示。这份片段与网关实际挂载的接口同源（同一份反射结果），因此不可能与 `@Operation` / `@GetMapping` 漂移。
 
-```json
-{
-  "openapi": "3.1.2",
-  "paths": {
-    "/api/echo/v1/ping": {
-      "get": {
-        "summary": "回声",
-        "operationId": "ping",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/PingResponse" }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "PingResponse": {
-        "type": "object",
-        "properties": {
-          "message": { "type": "string", "examples": ["pong"] },
-          "userId": { "type": ["integer", "null"], "format": "int64" }
-        }
-      }
-    }
-  }
-}
+要让它描述得完整，只需把事情在代码里表达出来：
+
+### 5.1 返回值用具体类型，不要用 `Map`
+
+`ApiResponse<Map<String, Any?>>` 只能生成一个开放对象 `{"type":"object","additionalProperties":{}}`——`Map` 的键在运行时无从得知。声明一个 DTO 即可：
+
+```kotlin
+// GeoResponses.kt
+data class GeocodeResponse(
+    @field:Schema(description = "格式化地址", example = "北京市东城区…") val address: String,
+    @field:Schema(description = "纬度") val latitude: Double?,
+    @field:Schema(description = "经度") val longitude: Double?
+)
+
+// GeoController.kt
+@Operation(summary = "地理编码", description = "把地址解析为经纬度", operationId = "geocode")
+@GetMapping("/geocode")
+fun geocode(@RequestParam("address") address: String): ApiResponse<GeocodeResponse> =
+    ApiResponse.ok(geocodeService.geocode(address))
 ```
 
-- `paths` 的 key 用完整公开路径 `/api/{plugin}/v{version}/...`（与调用 URL 一致）；
-- 安装时原样存入 `t_s_api_plugin.openapi`；
-- `GET /user/api/docs`（列表）/ `GET /user/api/docs/{pluginId}`（详情）返回给前端；
-- **片段是 OpenAPI 3.1 文档**，其 Schema 遵循 JSON Schema 2020-12：示例用 `examples: [值]`（数组）而非 `example`，可空用 `type` 数组表达（`"type": ["integer", "null"]`），二进制载荷用 `contentMediaType`（如 `application/octet-stream`）而非 `format: binary`；
-- 一个片段覆盖该插件的全部接口，可同时描述多个 API 版本（如 `/api/echo/v1/...` 与 `/api/echo/v2/...`）；
-- **缺省不影响安装**：文档端点仍返回接口列表，只是缺少参数/结构详情。
+生成的片段里 `data` 就是 `GeocodeResponse` 的 schema（含字段描述、类型、可空）。**注意别改变线上 JSON**：DTO 的字段名与可达性要和原来的 `Map` 键一致。
+
+### 5.2 参数、请求体、描述
+
+- 方法参数上的 `@PathVariable` / `@RequestParam` / `@RequestHeader` / `@CookieValue` → `parameters`（`in`、`required` 由注解决定；未写名字时取 Kotlin 参数名）；
+- `@RequestBody` → `application/json` 的 `requestBody`；`@RequestPart` → `multipart/form-data`，每个 part 成为一个属性；
+- 补充说明用 swagger 注解：参数上 `@Parameter(description = ..., example = ...)`，DTO 字段上 `@field:Schema(description = ..., example = ...)`；
+- `operationId` / `summary` / `description` 取自方法上的 `@Operation`（`operationId` 仍是接口的持久化身份，必填）。
+
+### 5.3 生成规则（了解即可）
+
+- `paths` 的 key 是完整公开路径 `/api/{plugin}/v{version}/...`，与调用 URL 一致；
+- 片段是 OpenAPI 3.1，Schema 遵循 JSON Schema 2020-12：可空用类型联合 `"type": ["integer", "null"]`，示例用 `examples: [值]` 数组，二进制用 `contentMediaType`；
+- 返回 `ApiResponse<T>` 时 envelope 被内联（`code`/`success`/`msg`/`data`），`data` 是 `T` 的 schema；`ResponseEntity<ByteArray>` → `application/octet-stream`；`Unit`/`void` → 200 响应无 `content`；
+- 一个片段覆盖该插件全部接口，多个 `@ApiController` 版本（v1/v2）都在其中；
+- **生成失败不影响安装**：文档端点仍返回接口列表，只是该插件缺参数/结构详情，网关日志里有一条 WARN。
 
 ---
 
