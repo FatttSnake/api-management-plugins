@@ -173,7 +173,7 @@ plugins {
 version = "1.0.0"
 
 apiPlugin {
-    pluginId = "geo"              // 唯一 ID，须与 @ApiController.plugin 一致
+    pluginId = "geo"              // 唯一 ID，≤64 字符；插件的唯一身份来源
     pluginName = "Geo 插件"
     versionCode = 1               // 必填；驱动网关升级判定，发版须递增
     description = "把地理编码开放成 API"   // 可选
@@ -184,7 +184,7 @@ apiPlugin {
 
 ```kotlin
 // src/main/kotlin/com/example/geo/GeoController.kt —— 你的控制器
-@ApiController(plugin = "geo", version = 1)   // 接口级 name/description 取自各方法的 @Operation
+@ApiController(version = 1)   // 接口级 name/description 取自各方法的 @Operation
 class GeoController(private val pluginContext: PluginContext) {
     @GetMapping("/geocode")
     fun geocode(): ApiResponse<Map<String, Any?>> = ApiResponse.ok(mapOf("ok" to true))

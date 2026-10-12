@@ -18,10 +18,7 @@ import top.fatweb.apimanagement.sdk.plugin.PluginContext
  * @see ApiController
  * @see PluginContext
  */
-@ApiController(
-    plugin = "echo",
-    version = 2
-)
+@ApiController(version = 2)
 class EchoControllerV2(
     private val pluginContext: PluginContext
 ) {

@@ -174,7 +174,7 @@ plugins {
 version = "1.0.0"
 
 apiPlugin {
-    pluginId = "geo"              // unique ID; must equal @ApiController.plugin
+    pluginId = "geo"              // unique ID, ≤64 chars; the plugin's whole identity
     pluginName = "Geo Plugin"
     versionCode = 1               // required; drives the gateway upgrade check, bump per release
     description = "Expose geocoding as an API"   // optional
@@ -185,7 +185,7 @@ apiPlugin {
 
 ```kotlin
 // src/main/kotlin/com/example/geo/GeoController.kt — your controller
-@ApiController(plugin = "geo", version = 1)   // per-interface name/description come from each method's @Operation
+@ApiController(version = 1)   // per-interface name/description come from each method's @Operation
 class GeoController(private val pluginContext: PluginContext) {
     @GetMapping("/geocode")
     fun geocode(): ApiResponse<Map<String, Any?>> = ApiResponse.ok(mapOf("ok" to true))

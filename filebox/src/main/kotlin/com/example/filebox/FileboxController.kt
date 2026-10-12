@@ -30,10 +30,7 @@ import java.nio.charset.StandardCharsets
  * @see PluginContext
  * @see FileboxService
  */
-@ApiController(
-    plugin = "filebox",
-    version = 1
-)
+@ApiController(version = 1)
 class FileboxController(
     private val pluginContext: PluginContext,
     private val fileboxService: FileboxService
