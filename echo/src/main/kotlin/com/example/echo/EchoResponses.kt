@@ -5,9 +5,8 @@ import io.swagger.v3.oas.annotations.media.Schema
 /**
  * Echo response (v1)
  *
- * The payload of `/api/echo/v1/ping`. It is a declared type rather than a map so the
- * gateway can describe it: the documentation fragment is generated from these classes on
- * every mount, and a `Map<String, Any?>` would only ever describe itself as an open object.
+ * The payload of `/api/echo/v1/ping`. A declared type rather than a map, because the
+ * documentation fragment is generated from these classes.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
@@ -51,7 +50,7 @@ data class VersionResponse(
 /**
  * Echo response (v2)
  *
- * The payload of `/api/echo/v2/ping`, which carries the version alongside the message.
+ * The payload of `/api/echo/v2/ping`.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0

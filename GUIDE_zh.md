@@ -351,18 +351,18 @@ SDK 提供的用户侧响应信封，与网关内部 `ResponseResult` 解耦：
 ```kotlin
 @Component
 class GeoLifecycle : PluginLifecycle {
-    override fun onInstall(context: PluginContext) {}    // 每次挂载后（可做 DDL/种子数据）
-    override fun onStart(context: PluginContext) {}      // 每次挂载后，紧跟 onInstall
-    override fun onStop(context: PluginContext) {}       // 每次卸载前
-    override fun onUninstall(context: PluginContext) {}  // 插件被摘掉之后
+    override fun onStart(context: PluginContext) {}      // 每次挂载、路由注册之前
+    override fun onStop(context: PluginContext) {}       // 每次卸载、正在服务的请求都结束之后
+    override fun onUninstall(context: PluginContext) {}  // 插件被摘除之时（升级也会走；数据源已关、类加载器仍在）
+    override fun onPurge(context: PluginContext) {}      // 明确要求清除数据的卸载
 }
 ```
 
-在 `apiPlugin { mainClass = "…" }` 里指定，或让网关自动发现。`echo/` 的 `EchoLifecycle` 在每个钩子里写入一条插件级设置（`installedAt` / `startedAt` / `stoppedAt` / `uninstalledAt`），演示 `PluginContext.saveSetting` 的用法。
+在 `apiPlugin { mainClass = "…" }` 里指定，或让网关自动发现。`echo/` 的 `EchoLifecycle` 在每个钩子里写入一条插件级设置（`startedAt` / `stoppedAt` / `uninstalledAt`），演示 `PluginContext.saveSetting` 的用法。
 
 **`PluginLifecycle` 只有在它确实是一个被子容器扫描到的 Spring bean 时才会运行**（见 §6.1）：放在控制器包树之外的实现不会被实例化，所有钩子跳过，挂载时会打一条点名该组件的 WARN。描述符里的 `mainClass` 指明哪个生命周期 bean 是入口：不写时用插件唯一的 `PluginLifecycle` bean，**有多个 bean 又没写 `mainClass` 会导致安装失败**，而不是随便挑一个；写了 `mainClass` 却匹配不到任何 bean 同样会失败。一个生命周期 bean 都没有时，插件就是在完全没有生命周期的情况下挂载的。
 
-**挂载不是一次性事件，这些钩子因此也不是。** 网关会在插件安装时、网关启动重挂载时、`reload` 时，以及任何一次改到该插件数据源组成值的保存之后挂载它——而**每次挂载都会先跑 `onInstall` 再跑 `onStart`**。重挂载会先把插件拆掉，所以插件生命周期中途会出现自己的 `onStop`，不要指望只放在内存里的状态还在。`onUninstall` 值得多读两遍：**升级是先卸载旧版本再装新版本**，所以升级时它也会跑一次——绝不能当成"插件再也回不来了"而在那里删数据。网关只有在卸载显式要求时才清理插件的设置、SQLite 数据库与文件（`purgeData=true`），升级永远不会。
+**挂载不是一次性事件，这些钩子因此也不是。** 插件在安装、网关启动重挂载、`reload`、任何一次改到它数据源组成值的保存，以及**它处于挂载失败状态时的任意一次保存**之后都会重新挂载，而**每次挂载都会跑 `onStart`**。重挂载的顺序是**先把新实例建起来并跑完 `onStart`（此刻旧实例仍在服务），再拆掉旧实例**，所以中途会出现自己的 `onStop`（在新 `onStart` 之后），只放在内存里的状态会随之丢失——也意味着 `onStart` 可能和上一份实例同时在跑。`onUninstall` 值得多读两遍：**升级会在装新版本的过程中把旧版本拆掉**，所以升级时它也会跑一次——绝不能当成"插件再也回不来了"而在那里删数据。清理插件的设置、SQLite 数据库与文件只在卸载显式要求时发生（`purgeData=true`，触发 `onPurge`），升级永远不会。
 
 ### 6.5 自带依赖
 
@@ -449,12 +449,12 @@ class GeoLifecycle : PluginLifecycle {
 
 - **`datasources` 数组是独立数据源的唯一声明**：每个条目为一项连接事实点名一个配置 key，于是这些事实就是普通配置项，表单、约束、密钥加密全部复用。**没有这个数组 = 不使用独立库**，网关既不构建也不注入，管理端也拒绝为其保存数据源。详见 §6.3。
 - **默认值只在 schema 里声明一次**：DB 只存管理员显式覆盖过的项，`getSetting` 查不到行时返回 schema 默认值。所以插件升级改默认值能生效，插件代码里也不必再写一份兜底。
-- **所有权**：schema 声明过的 key 归管理员，插件 `saveSetting` 写它会抛异常；未声明的 key 仍是插件的运行态空间（`installedAt` 这类照旧可写）。
-- **secret 项**：网关加密存储（AES-GCM，密钥派生自 `app.security.tokenSecret`），管理端接口**永不回传明文**——secret 的 `value` 恒为 `null`，唯一能表示"存过没有"的是 `hasValue`。因此**保持原值的做法是提交时不带这个 key**，带任何别的值就是覆盖，留空就是清除。**没有掩码可以回传**：控制台若自己造一个 `******` 回传，每次保存都会把已存的密钥覆盖掉。插件读到的始终是明文。`unreadable: true` 表示该 secret 的密文在 `tokenSecret` 轮换后已解不开——只能重新录入，在此之前插件自己 `getSetting` 读它会抛 `IllegalStateException`。注意轮换 `tokenSecret` 会让所有 secret 与所有外链同时失效。另外 `hasValue` **每个字段都有**（不止 secret）：它表示"管理员自己设过值"，反之表示读到的是声明的默认值。
+- **所有权**：schema 声明过的 key 归管理员，插件 `saveSetting` 写它会抛异常；未声明的 key 仍是插件的运行态空间（`startedAt` 这类照旧可写）。
+- **secret 项**：网关加密存储（AES-GCM，密钥派生自 `app.security.tokenSecret`），接口**永不回传明文**——`value` 恒为 `null`，用 `hasValue` 表示存过没有。**保持原值就是提交时不带这个 key**：带别的值是覆盖，留空是清除；没有掩码可以回传，控制台若自造一个 `******` 回传，每次保存都会覆盖掉已存密钥。插件读到的始终是明文。`unreadable: true` 表示密文在 `tokenSecret` 轮换后已解不开，只能重新录入（在此之前 `getSetting` 读它抛 `IllegalStateException`）；轮换会让所有 secret 与所有外链同时失效。`hasValue` 每个字段都有，表示管理员自己设过值，否则读到的是声明的默认值。
 - **校验是网关侧权威的**：未声明的 key、类型不符、超范围、enum 越界都会被拒绝保存。同一分组或同一 key 重复提交会被判为结构性错误；又因为数据源背后的值就是网关构建连接的依据，保存前还会先过一遍连接规则（host 形状、端口范围、库名、驱动参数黑名单）——根本连不上的组合会被拒，而不是先存下来。
 - **schema 非法即拒绝安装**（刻意的 fail-fast）：文件不存在 = 无配置项，文件存在但解析失败 = 安装失败并报错；schema 内分组/字段 key 重复、或 `mysql` 数据源没有同时给出 `host` 与 `database` 槽位，同样安装失败。
-- **生效时机**：普通配置项**改完即生效**（每次 `getSetting` 都读库），不需要重新挂载。构成数据源的配置项不同——连接是网关构建的，改它会重挂载插件（见 §8）。这个判断依据的是**值确实变了**而不是"有人提交了请求"，所以保存无关配置项不会重启你的插件。
-- **编辑器 / 构建期反馈**：网关仓库随附一份与这些校验对应的 JSON Schema：[`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json)。把它接给编辑器或构建步骤时要用 **raw 地址** `https://raw.githubusercontent.com/FatttSnake/api-management/master/docs/plugin-config.schema.json` （`.vscode/settings.json` 里加一条 `json.schemas`、`fileMatch` 设为 `["**/META-INF/plugin-config.json"]`；JetBrains 用 JSON Schema Mapping；CI 里可以用 `check-jsonschema`）。别把上面那个 `github.com/.../blob/...` 网页地址交给工具：它返回的是 HTML，拿到它的客户端会**静默**加载失败——JetBrains 右下角照样显示识别到了 schema，但补全和校验一概不来。**但不要把它写进文件本身**：`$schema` 键本身就是网关不认识的属性，顶层只接受 `groups`、`datasources`，写了会直接导致安装失败。
+- **生效时机**：普通配置项**改完即生效**（每次 `getSetting` 都读库），不需要重新挂载。构成数据源的配置项不同——连接是网关构建的，改它会重挂载插件（见 §8）。这个判断依据的是**值确实变了**而不是"有人提交了请求"，所以保存无关配置项不会重启你的插件。唯一例外是插件当前处于挂载失败状态（`load_error` 有值）：此时**任意一次保存都会重挂载它**，好让管理员修好之后不用手动 `reload` 就能自动叫回来。
+- **编辑器 / 构建期反馈**：网关仓库随附一份与这些校验对应的 JSON Schema：[`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json)。接给编辑器或 CI 时要用 **raw 地址** `https://raw.githubusercontent.com/FatttSnake/api-management/master/docs/plugin-config.schema.json`（`.vscode/settings.json` 里加一条 `json.schemas`、`fileMatch` 设为 `["**/META-INF/plugin-config.json"]`；JetBrains 用 JSON Schema Mapping；CI 可用 `check-jsonschema`）。用 `github.com/.../blob/...` 网页地址会拿到 HTML，客户端**静默**加载失败。**别把它写进文件本身**：`$schema` 是网关不认识的属性，顶层只接受 `groups`、`datasources`，写了会导致安装失败。
 
 ### 6.7 文件存储与外链 `PluginStorage`
 
@@ -553,7 +553,7 @@ GET /api/echo/v2/whoami   # v2 专属
 | 修改配置 | `PUT /system/api/plugin/config` | 按分组保存：`{pluginId, groups:[{key, values:[{key,value}]}]}`。普通配置项立即生效；没传的键保持原值，传空则清除该键（文本类的空串是一个值）。`required` 只对本次点名的分组校验。**改到构成数据源的配置项会自动重挂载插件**，不需要额外步骤 |
 | 配置数据源 | 同上（配置接口） | MySQL 数据源由其 `datasources` 条目点名的那些配置项描述。清空 host 即取消配置，这不是错误——插件只是不再拿到该数据源 |
 | 重新挂载 | `POST /system/api/plugin/{pluginId}/reload` | 用已存储的 jar 原地重挂载：版本、DB 行、权限树、配置、数据全部保留。用于**换了 jar**；改数据源不需要它 |
-| 升级 | 改 `apiPlugin.versionCode` 后重新构建上传 | 旧版自动替换；`versionCode <= 当前` 会被拒绝。**升级不清除插件配置与数据**（设置、数据源、文件区都保留），也不会把管理员禁用过的插件重新启用——`reload` 与改数据源的配置保存同样不会。内部实现是先卸载旧版本再安装新版本，所以插件会依次看到 `onStop` → `onUninstall` → `onInstall` → `onStart`，不要把 `onUninstall` 当成插件的终点（见 §6.4） |
+| 升级 | 改 `apiPlugin.versionCode` 后重新构建上传 | 旧版自动替换；`versionCode <= 当前` 会被拒绝。**升级不清除插件配置与数据**（设置、数据源、文件区都保留），也不会把管理员禁用过的插件重新启用——`reload` 与改数据源的配置保存同样不会。内部实现是先把新版本建起来并跑完 `onStart`，再拆掉旧版本，所以插件会依次看到 `onStart`（新）→ `onStop` → `onUninstall`（旧），不要把 `onUninstall` 当成插件的终点（见 §6.4） |
 | 卸载 | `DELETE /system/api/plugin/{pluginId}?purgeData=false` | 路由注销、DB 行删除、权限树清理。`purgeData` 默认为 `false`，即**保留**插件设置、SQLite 数据库目录与文件区，重装同一 pluginId 即可直接续用；`purgeData=true` 才清除这几类。**外部 MySQL 库不在此列**——网关不会去删 DBA 库里的表 |
 | 重启 | 无需操作 | 已装插件从 blob 自动重挂载，无需重传 |
 

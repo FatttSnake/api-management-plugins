@@ -9,9 +9,7 @@ import top.fatweb.apimanagement.sdk.plugin.PluginContext
 /**
  * Echo controller (v2)
  *
- * Coexists with [EchoController] inside the same plugin: `v2` overrides `v1` for
- * requests at version >= 2 (rolling forward compatibility), demonstrating multiple
- * API versions in one plugin.
+ * Coexists with [EchoController]: `v2` overrides `v1` for requests at version >= 2.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0

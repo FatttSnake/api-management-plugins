@@ -80,9 +80,8 @@ class FileboxController(
     /**
      * Download a file
      *
-     * The bytes are returned as they are, not wrapped in the response envelope, which is
-     * the pass-through the SDK allows for an endpoint whose payload is the payload. A
-     * failure is reported through the gateway's own error envelope instead.
+     * The bytes come back unwrapped, the pass-through the SDK allows for an endpoint whose
+     * payload is the payload. Failures still use the gateway's error envelope.
      *
      * @param id File ID
      * @return File content

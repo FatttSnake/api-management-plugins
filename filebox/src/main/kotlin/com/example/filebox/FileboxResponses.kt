@@ -5,10 +5,8 @@ import io.swagger.v3.oas.annotations.media.Schema
 /**
  * File metadata response
  *
- * The payload of an upload, and the element type of the file list. The owner is left out
- * because a caller only ever sees its own files, so it would be the same value on every
- * row. A declared type rather than a map, because the gateway generates the documentation
- * fragment from these classes and a map would only ever describe itself as an open object.
+ * The payload of an upload, and the element type of the file list. A declared type rather
+ * than a map, because the gateway generates the documentation fragment from these classes.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
@@ -53,7 +51,6 @@ data class FileResponse(
  * @return File response
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see FileResponse
  */
 fun FileboxFile.toResponse(): FileResponse = FileResponse(
     id = id,
@@ -157,7 +154,6 @@ data class SnapshotResponse(
  * @return Snapshot response
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see SnapshotResponse
  */
 fun SnapshotResult.toResponse(): SnapshotResponse = SnapshotResponse(
     contentKey = contentKey,

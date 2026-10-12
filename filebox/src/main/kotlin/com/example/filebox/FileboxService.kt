@@ -10,16 +10,12 @@ import javax.sql.DataSource
 /**
  * Filebox service
  *
- * Everything here goes through the two channels a plugin is allowed to use: its own
- * isolated datasources for metadata, and [PluginContext.storage] for bytes. Nothing is
- * read from the gateway's own database, and no file is written outside the plugin's
- * storage namespace - the SDK composes that namespace from the plugin ID, so it cannot
- * be addressed from here at all.
+ * Everything here goes through the two channels a plugin may use: its own isolated
+ * datasources for metadata, and [PluginContext.storage] for bytes. No file is written
+ * outside the plugin's storage namespace, which the SDK composes from the plugin ID.
  *
- * The metadata is split across the two datasources the plugin declares: file rows live in
- * the MySQL database an administrator configures, and snapshots in the SQLite one the
- * gateway derives, because a snapshot is derived text that is not worth a table on a
- * server somebody has to operate.
+ * File rows live in the MySQL datasource an administrator configures, snapshots in the
+ * SQLite one the gateway derives.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
@@ -70,10 +66,8 @@ class FileboxService(private val pluginContext: PluginContext) {
     /**
      * Upload a file
      *
-     * The bytes are stored under a path the plugin picks, which is what makes them
-     * readable by a browser later through an external link. The name the user gave is
-     * kept in the database only: a file name is arbitrary text, and a storage path is
-     * not.
+     * The bytes go to a path the plugin picks, which is what makes them readable later
+     * through an external link; the original file name is kept in the database only.
      *
      * @param ownerId Owner ID
      * @param fileName Original file name
@@ -83,8 +77,6 @@ class FileboxService(private val pluginContext: PluginContext) {
      *         has not been configured yet
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ByteArray
-     * @see FileboxFile
      */
     fun upload(ownerId: Long, fileName: String, bytes: ByteArray): FileboxFile {
         val repository = repository()
@@ -124,7 +116,6 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @return File metadata, newest first
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxFile
      */
     fun list(ownerId: Long): List<FileboxFile> = repository().listFiles(ownerId)
 
@@ -137,7 +128,6 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @throws FileboxException when the file does not exist or belongs to somebody else
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxFile
      */
     fun requireFile(ownerId: Long, id: String): FileboxFile {
         val file = repository().findFile(id)
@@ -152,8 +142,8 @@ class FileboxService(private val pluginContext: PluginContext) {
     /**
      * Download a file
      *
-     * The bytes come back exactly as they were stored: location-addressed objects are not
-     * compressed, which is what lets the same object be handed to a browser later.
+     * The bytes come back exactly as stored: location-addressed objects are not compressed,
+     * which is what lets the same object be handed to a browser.
      *
      * @param ownerId Owner ID
      * @param id File ID
@@ -161,8 +151,6 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @throws FileboxException when the file or its content is gone
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxFile
-     * @see ByteArray
      */
     fun download(ownerId: Long, id: String): Pair<FileboxFile, ByteArray> {
         val file = requireFile(ownerId, id)
@@ -175,9 +163,8 @@ class FileboxService(private val pluginContext: PluginContext) {
     /**
      * Mint a login-free link to a file
      *
-     * The link is a bearer credential: whoever holds it can read the file until it
-     * expires, and it cannot be revoked before then. Deleting the file does make it fail
-     * immediately, so this is the plugin's own kill switch.
+     * The link is a bearer credential: readable until it expires and not revocable before
+     * then. Deleting the file does make it fail immediately.
      *
      * @param ownerId Owner ID
      * @param id File ID
@@ -189,8 +176,7 @@ class FileboxService(private val pluginContext: PluginContext) {
      */
     fun externalUrl(ownerId: Long, id: String, ttlHours: Long?): Pair<String, Long> {
         val file = requireFile(ownerId, id)
-        // Reading the configured default shows the schema at work: the administrator
-        // never has to set it, the gateway answers with the declared default instead
+        // The gateway answers with the declared default, so the administrator never has to set it
         val hours = ttlHours ?: intConfig(DEFAULT_LINK_TTL_HOURS, 1).toLong()
         if (hours <= 0) {
             throw FileboxException(FileboxCode.INVALID_ARGUMENT, "外链有效期必须大于 0")
@@ -224,10 +210,9 @@ class FileboxService(private val pluginContext: PluginContext) {
     /**
      * Store a text snapshot
      *
-     * The content is addressed by its own SHA-256, so storing the same text twice shares
-     * one object and one row rather than writing a second copy. This is the addressing
-     * mode to reach for when the bytes never have to reach a browser: the gateway keeps
-     * these objects compressed, which is exactly why it refuses to mint a link for one.
+     * Addressed by its own SHA-256, so storing the same text twice shares one object and
+     * one row. Reach for it when the bytes never have to reach a browser: the gateway keeps
+     * these compressed, which is why it refuses to mint a link for one.
      *
      * @param ownerId Owner ID
      * @param text Text content
@@ -235,11 +220,9 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @throws FileboxException when snapshots are disabled
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see SnapshotResult
      */
     fun snapshot(ownerId: Long, text: String): SnapshotResult {
-        // A configuration change is visible on the very next call: nothing is remounted
-        // for it, because the value is read from the gateway per invocation
+        // Read per call, so a config change is visible on the very next invocation - no remount
         if (!booleanConfig(ALLOW_SNAPSHOT, true)) {
             throw FileboxException(FileboxCode.SNAPSHOT_DISABLED, "文本快照功能未启用，可在插件配置中开启")
         }
@@ -331,18 +314,14 @@ class FileboxService(private val pluginContext: PluginContext) {
     /**
      * Resolve one of the plugin's datasources
      *
-     * `main` is a MySQL database only the administrator can describe, so it is absent from
-     * `context.datasources` until they have filled in where it is; `cache` is a SQLite one
-     * the gateway derives the moment the plugin declares it, so it is always there.
-     * Reporting the missing one from the endpoint is friendlier than refusing to mount at
-     * all, and leaves a plugin that is already serving something to say what is wrong
-     * instead of disappearing.
+     * `main` is absent from `context.datasources` until the administrator fills it in;
+     * `cache`, a SQLite one the gateway derives, is always there. Reporting the missing one
+     * from the endpoint beats refusing to mount.
      *
      * @param name Datasource name
      * @throws FileboxException when the gateway supplied no such datasource
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see DataSource
      */
     private fun requireDataSource(name: String): DataSource = pluginContext.datasources[name]
         ?: throw FileboxException(
@@ -353,8 +332,8 @@ class FileboxService(private val pluginContext: PluginContext) {
     /**
      * Read an integer setting
      *
-     * The fallback only covers a value the gateway would never have stored - the schema
-     * default is what an unset key reads as, so it is not repeated here.
+     * The fallback only covers a value the gateway would never have stored; an unset key
+     * reads as the schema default.
      */
     private fun intConfig(key: String, fallback: Int): Int =
         pluginContext.getSetting(key)?.toIntOrNull() ?: fallback
@@ -368,8 +347,8 @@ class FileboxService(private val pluginContext: PluginContext) {
     /**
      * Build a storage-safe extension from a user-supplied file name
      *
-     * Anything that is not a short ASCII word is dropped: a storage path segment is
-     * restricted to URL-safe characters, and a file name is not.
+     * Anything that is not a short ASCII word is dropped: a storage path segment must be
+     * URL-safe, a file name need not be.
      */
     private fun extensionOf(fileName: String): String {
         val extension = fileName.substringAfterLast('.', "")

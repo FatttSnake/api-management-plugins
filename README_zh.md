@@ -54,7 +54,7 @@ api-management-plugins/
 |---|---|
 | 控制器 / 版本共存 | `EchoController`(v1)、`EchoControllerV2`(v2)——同一插件内滚动兼容 |
 | 业务 bean 注入 | `EchoService`（构造函数注入） |
-| 生命周期钩子 | `EchoLifecycle`（`installedAt`/`startedAt`/`stoppedAt`/`uninstalledAt` 写入插件级设置） |
+| 生命周期钩子 | `EchoLifecycle`（`startedAt`/`stoppedAt`/`uninstalledAt` 写入插件级设置） |
 | 描述符 / 文档 | `apiPlugin {}` 生成 `api-plugin.json`；OpenAPI 文档由网关在挂载时从控制器与响应 DTO 生成 |
 | 密钥 / 签名 | `genPluginKeys` 自动生成 + `signPlugin` 构建期签名 |
 
@@ -85,7 +85,7 @@ api-management-plugins/
 | 位置寻址 + 免登外链 | `saveFile` / `loadFile` / `fileExternalUrl`：上传、下载、外链、删除 |
 | 内容寻址 + 去重 | `saveContent` / `loadContent` / `existsContent`：同一段文本只存一份，响应里的 `deduplicated` 表示命中了已有对象 |
 | 配置即时生效 | 关掉 `allowSnapshot` 后快照接口立刻返回未启用，**无需重新挂载** |
-| 生命周期 | `FileboxLifecycle` 在 `onInstall` / `onStart` 建表并写运行态设置 |
+| 生命周期 | `FileboxLifecycle` 在 `onStart` 建表、`onPurge` 删表，并写入运行态设置 |
 
 安装、配置后调用（Basic 认证 `accessKey:secretKey`）：
 

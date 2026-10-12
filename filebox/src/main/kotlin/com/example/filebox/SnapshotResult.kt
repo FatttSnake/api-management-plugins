@@ -18,8 +18,8 @@ data class SnapshotResult(
     val size: Long,
 
     /**
-     * Whether the gateway already held this content, in which case storing it again
-     * shared the existing object instead of writing a second copy
+     * Whether the gateway already held this content, so storing it again shared the
+     * existing object
      */
     val deduplicated: Boolean
 )
