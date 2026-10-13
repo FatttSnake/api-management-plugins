@@ -39,22 +39,7 @@ data class FileboxFile(
      * Upload time, in epoch milliseconds
      */
     val createTime: Long
-) {
-    /**
-     * Build the API representation
-     *
-     * @return File fields
-     * @author FatttSnake, fatttsnake@gmail.com
-     * @since 1.0.0
-     */
-    fun toMap(): Map<String, Any?> = mapOf(
-        "id" to id,
-        "name" to name,
-        "size" to size,
-        "path" to path,
-        "createTime" to createTime
-    )
-}
+)
 
 /**
  * Filebox snapshot metadata
@@ -87,13 +72,11 @@ data class FileboxSnapshot(
 /**
  * Filebox repository
  *
- * Plain JDBC against the plugin's own datasource. The gateway's MyBatis mappers are not
- * visible to a plugin, and it should not want them: these tables belong to the plugin
- * alone, which is what lets it migrate them whenever it likes.
+ * Plain JDBC against the plugin's own datasource; the gateway's MyBatis mappers are not
+ * visible to a plugin, and these tables are the plugin's alone to migrate.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see DataSource
  */
 class FileboxRepository(private val dataSource: DataSource) {
     /**
@@ -102,7 +85,6 @@ class FileboxRepository(private val dataSource: DataSource) {
      * @param file File metadata
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxFile
      */
     fun insertFile(file: FileboxFile) {
         dataSource.connection.use { connection ->
@@ -127,7 +109,6 @@ class FileboxRepository(private val dataSource: DataSource) {
      * @return File metadata
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxFile
      */
     fun listFiles(ownerId: Long): List<FileboxFile> {
         dataSource.connection.use { connection ->
@@ -154,7 +135,6 @@ class FileboxRepository(private val dataSource: DataSource) {
      * @return File metadata, or null when it does not exist
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxFile
      */
     fun findFile(id: String): FileboxFile? {
         dataSource.connection.use { connection ->
@@ -188,14 +168,10 @@ class FileboxRepository(private val dataSource: DataSource) {
     /**
      * Insert the metadata of a snapshot if the content is not recorded yet
      *
-     * Identical content is stored once, so a second writer of the same bytes leaves the
-     * existing row alone rather than replacing its owner.
-     *
      * @param snapshot Snapshot metadata
      * @return true=inserted; false=the content was already recorded
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxSnapshot
      */
     fun insertSnapshot(snapshot: FileboxSnapshot): Boolean =
         dataSource.connection.use { connection ->
@@ -217,7 +193,6 @@ class FileboxRepository(private val dataSource: DataSource) {
      * @return Snapshot metadata, or null when it does not exist
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see FileboxSnapshot
      */
     fun findSnapshot(contentKey: String): FileboxSnapshot? {
         dataSource.connection.use { connection ->
@@ -244,10 +219,8 @@ class FileboxRepository(private val dataSource: DataSource) {
     /**
      * Every content key this plugin's snapshots reference
      *
-     * Read when the plugin is purged, to give back the content-addressed objects it stored.
-     * Those are shared between every writer of the same bytes and belong to no plugin, so the
-     * gateway has no way to tell which of them a plugin put there - only the plugin does, and
-     * this is where it knows.
+     * Read on purge, to give back the content-addressed objects it stored: they are shared
+     * between writers and belong to no plugin, so only the plugin can say which are its own.
      *
      * @return Content keys, in no particular order
      * @author FatttSnake, fatttsnake@gmail.com

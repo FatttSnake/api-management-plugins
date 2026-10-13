@@ -14,10 +14,7 @@ import top.fatweb.apimanagement.sdk.plugin.PluginContext
  * @see ApiController
  * @see PluginContext
  */
-@ApiController(
-    plugin = "echo",
-    version = 1
-)
+@ApiController(version = 1)
 class EchoController(
     private val pluginContext: PluginContext,
     private val echoService: EchoService
@@ -32,11 +29,11 @@ class EchoController(
      */
     @Operation(summary = "回声", description = "返回回声消息与当前调用者", operationId = "ping")
     @GetMapping("/ping")
-    fun ping(): ApiResponse<Map<String, Any?>> =
+    fun ping(): ApiResponse<PingResponse> =
         ApiResponse.ok(
-            mapOf(
-                "message" to echoService.message(),
-                "userId" to pluginContext.currentUserId()
+            PingResponse(
+                message = echoService.message(),
+                userId = pluginContext.currentUserId()
             )
         )
 
@@ -50,6 +47,11 @@ class EchoController(
      */
     @Operation(summary = "版本信息", description = "返回插件 API 版本与端点列表", operationId = "version")
     @GetMapping("/version")
-    fun version(): ApiResponse<Map<String, Any?>> =
-        ApiResponse.ok(mapOf("version" to 1, "apis" to listOf("ping", "version")))
+    fun version(): ApiResponse<VersionResponse> =
+        ApiResponse.ok(
+            VersionResponse(
+                version = 1,
+                apis = listOf("ping", "version")
+            )
+        )
 }

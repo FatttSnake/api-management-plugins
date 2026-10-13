@@ -28,7 +28,7 @@ Gradle 插件与 SDK 从**网关仓库**一起构建发布。首次使用前先�
 ```
 插件工程（独立 Gradle build）                   网关（api-management-backend）
 ┌──────────────────────────────────┐        ┌──────────────────────────────────────────┐
-│ Kotlin 源码 + 手动 OpenAPI 片段   │ 上传   │ PluginSigner.verify（签名完整性）          │
+│ Kotlin 源码（含响应 DTO）         │ 上传   │ PluginSigner.verify（签名完整性）          │
 │ (build.gradle.kts 声明 apiPlugin)│──────▶│ 信任库校验（公钥 keyId 在库且启用）         │
 │                                  │        │ 子优先 ClassLoader 加载 jar               │
 │ Gradle 插件在 build 期自动完成：   │        │ 子容器 GenericApplicationContext         │
@@ -60,7 +60,7 @@ geo/
 ├─ keys/            # 首次 build 自动生成（private.pem 勿提交）
 └─ src/main/
    ├─ kotlin/com/example/geo/GeoController.kt   # 你的 @ApiController 控制器
-   └─ resources/META-INF/plugin-openapi.json    # OpenAPI 文档片段（可选）
+   └─ kotlin/com/example/geo/GeoResponses.kt    # 响应 DTO（文档由网关从它们生成）
 ```
 
 ### 2.1 `settings.gradle.kts`
@@ -101,12 +101,12 @@ apiPlugin {
 
 | DSL 字段 | 必填 | 默认 | 写入描述符 |
 |---|---|---|---|
-| `pluginId` | ✅ | 工程名 | `pluginId`（须与 `@ApiController.plugin` 一致） |
+| `pluginId` | ✅ | 工程名 | `pluginId`（插件的唯一身份来源；`@ApiController` 不再重复它） |
 | `pluginName` | | 同 `pluginId` | `name` |
 | `versionName` | | 工程 `version`（空串同样回退） | `versionName` |
 | `versionCode` | ✅ | —（必填，无默认） | `versionCode`（升级须单调递增） |
 | `description` / `author` | | 空 | 同名 |
-| `mainClass` | | 无 | `mainClass`（缺省时网关自动发现） |
+| `mainClass` | | 无 | `mainClass`（缺省时用插件唯一的 `PluginLifecycle` bean；有多个 bean 又没写 `mainClass` 会导致安装失败） |
 | `sdkVersion` | | 插件自带 SDK 版本 | （不写描述符，只控制依赖版本） |
 | `archiveName` | | `<pluginId>-<versionName>.jar` | （jar 文件名） |
 
@@ -177,12 +177,12 @@ tasks.build { dependsOn(signPlugin) }
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `pluginId` | ✅ | 唯一 ID，`^[a-z][a-z0-9-]*$`，与所有 `@ApiController.plugin` 一致 |
+| `pluginId` | ✅ | 唯一 ID，`^[a-z][a-z0-9-]{0,63}$`——最多 64 字符，与网关 `plugin_id` 列宽一致。所有端点都挂在 `/api/{plugin}/v{version}/…` 之下 |
 | `name` | ✅ | 插件显示名（菜单/权限树/文档用） |
 | `versionName` | ✅ | 人类可读版本，如 `1.2.0`；手写描述符**必填**（用 Gradle 插件则缺省取工程 `version`） |
 | `versionCode` | | **单调递增**整数；升级必须大于当前已装版本，否则拒绝 |
 | `description` / `author` | | 描述 / 作者 |
-| `mainClass` | | `PluginLifecycle` 实现类全限定名（需 `@Component`，且必须落在被扫描的包内——见 §6.1）；缺省则自动发现，而写了一个匹配不到任何 bean 的值时不会报错，会静默改用第一个生命周期 bean |
+| `mainClass` | | `PluginLifecycle` 实现类全限定名（需 `@Component`，且必须落在被扫描的包内——见 §6.1）。缺省时用插件唯一的 `PluginLifecycle` bean；写了匹配不到任何 bean 的值，或有多个生命周期 bean 又没写 `mainClass`，都会**导致安装失败** |
 
 > `versionCode` 参考 Android versionCode 语义：**同一 pluginId 只允许装一个实例，升级只能往更高 versionCode 升**。
 
@@ -228,51 +228,47 @@ POST /system/api/plugin/key
 
 ---
 
-## 5. OpenAPI 文档配置
+## 5. OpenAPI 文档
 
-可选的手写资源 `src/main/resources/META-INF/plugin-openapi.json`（OpenAPI 3.1 片段），描述参数与数据结构，供网关给最终用户展示。`echo/` 的片段：
+**不需要手写 OpenAPI 片段。** 网关在每次挂载插件时，从你的控制器反射生成一份 OpenAPI 3.1 片段（`paths` + `components.schemas`），写入插件记录，并由 `GET /user/api/docs/{pluginId}` 给最终用户展示。这份片段与网关实际挂载的接口同源（同一份反射结果），因此不可能与 `@Operation` / `@GetMapping` 漂移。
 
-```json
-{
-  "openapi": "3.1.2",
-  "paths": {
-    "/api/echo/v1/ping": {
-      "get": {
-        "summary": "回声",
-        "operationId": "ping",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/PingResponse" }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "PingResponse": {
-        "type": "object",
-        "properties": {
-          "message": { "type": "string", "examples": ["pong"] },
-          "userId": { "type": ["integer", "null"], "format": "int64" }
-        }
-      }
-    }
-  }
-}
+要让它描述得完整，只需把事情在代码里表达出来：
+
+### 5.1 返回值用具体类型，不要用 `Map`
+
+`ApiResponse<Map<String, Any?>>` 只能生成一个开放对象 `{"type":"object","additionalProperties":{}}`——`Map` 的键在运行时无从得知。声明一个 DTO 即可：
+
+```kotlin
+// GeoResponses.kt
+data class GeocodeResponse(
+    @field:Schema(description = "格式化地址", example = "北京市东城区…") val address: String,
+    @field:Schema(description = "纬度") val latitude: Double?,
+    @field:Schema(description = "经度") val longitude: Double?
+)
+
+// GeoController.kt
+@Operation(summary = "地理编码", description = "把地址解析为经纬度", operationId = "geocode")
+@GetMapping("/geocode")
+fun geocode(@RequestParam("address") address: String): ApiResponse<GeocodeResponse> =
+    ApiResponse.ok(geocodeService.geocode(address))
 ```
 
-- `paths` 的 key 用完整公开路径 `/api/{plugin}/v{version}/...`（与调用 URL 一致）；
-- 安装时原样存入 `t_s_api_plugin.openapi`；
-- `GET /user/api/docs`（列表）/ `GET /user/api/docs/{pluginId}`（详情）返回给前端；
-- **片段是 OpenAPI 3.1 文档**，其 Schema 遵循 JSON Schema 2020-12：示例用 `examples: [值]`（数组）而非 `example`，可空用 `type` 数组表达（`"type": ["integer", "null"]`），二进制载荷用 `contentMediaType`（如 `application/octet-stream`）而非 `format: binary`；
-- 一个片段覆盖该插件的全部接口，可同时描述多个 API 版本（如 `/api/echo/v1/...` 与 `/api/echo/v2/...`）；
-- **缺省不影响安装**：文档端点仍返回接口列表，只是缺少参数/结构详情。
+生成的片段里 `data` 就是 `GeocodeResponse` 的 schema（含字段描述、类型、可空）。**注意别改变线上 JSON**：DTO 的字段名与可达性要和原来的 `Map` 键一致。
+
+### 5.2 参数、请求体、描述
+
+- 方法参数上的 `@PathVariable` / `@RequestParam` / `@RequestHeader` / `@CookieValue` → `parameters`（`in`、`required` 由注解决定；未写名字时取 Kotlin 参数名）；
+- `@RequestBody` → `application/json` 的 `requestBody`；`@RequestPart` → `multipart/form-data`，每个 part 成为一个属性；
+- 补充说明用 swagger 注解：参数上 `@Parameter(description = ..., example = ...)`，DTO 字段上 `@field:Schema(description = ..., example = ...)`；
+- `operationId` / `summary` / `description` 取自方法上的 `@Operation`（`operationId` 仍是接口的持久化身份，必填）。
+
+### 5.3 生成规则（了解即可）
+
+- `paths` 的 key 是完整公开路径 `/api/{plugin}/v{version}/...`，与调用 URL 一致；
+- 片段是 OpenAPI 3.1，Schema 遵循 JSON Schema 2020-12：可空用类型联合 `"type": ["integer", "null"]`，示例用 `examples: [值]` 数组，二进制用 `contentMediaType`；
+- 返回 `ApiResponse<T>` 时 envelope 被内联（`code`/`success`/`msg`/`data`），`data` 是 `T` 的 schema；`ResponseEntity<ByteArray>` → `application/octet-stream`；`Unit`/`void` → 200 响应无 `content`；
+- 一个片段覆盖该插件全部接口，多个 `@ApiController` 版本（v1/v2）都在其中；
+- **生成失败不影响安装**：文档端点仍返回接口列表，只是该插件缺参数/结构详情，网关日志里有一条 WARN。
 
 ---
 
@@ -284,7 +280,6 @@ SDK 的 `implementation` 依赖已由 Gradle 插件自动加入，并透传 spri
 
 ```kotlin
 @ApiController(
-    plugin = "geo",     // 必须与 apiPlugin.pluginId 一致（即 api-plugin.json 的 pluginId）
     version = 1         // API 版本，同一插件可含多个版本
 )
 class GeoController(
@@ -301,12 +296,16 @@ class GeoController(
 
 要点：
 
-- 控制器用**构造函数注入** `PluginContext` 和自己的 `@Service`，子容器自动装配。但它的扫描范围比 Spring Boot 应用窄：扫描基包是 jar 自身的顶层包中、能通往你的 `@ApiController` 所在包的那些，且只认 `@Component`（因此 `@Service` / `@Configuration` 有效）。**落在这些根包之外的组件永远不会被发现**——不报错，只是不在那里——所以协作者要和控制器放在同一棵包树下。若一个根包都推导不出来，安装会直接失败并报 `Cannot derive scan packages`。
+- 控制器用**构造函数注入** `PluginContext` 和自己的 `@Service`，子容器自动装配。但它的扫描范围比 Spring Boot 应用窄：扫描基包是 jar 自身的顶层包中、能通往你的 `@ApiController` 所在包的那些，且只认 `@Component`（因此 `@Service` / `@Configuration` 有效）。**落在这些根包之外的组件不会被注册**，挂载时会打一条点名该组件的 WARN——所以协作者要和控制器放在同一棵包树下。若一个根包都推导不出来，安装会直接失败并报 `Cannot derive scan packages`。
 - 这个子容器里只有你的 bean，加上网关注册的 `pluginContext` 与 `pluginDataSource.<name>`，除此之外什么都没有：它是一个普通的 `GenericApplicationContext`，**没有任何自动配置**。特别地，没有任何东西会开启调度，所以 `@Scheduled` 方法除非你自己在配置里打开，否则永远不会被处理。
-- 插件级元数据（`name`/`description`/`author`/版本号）在 `apiPlugin { }` 里**声明一次**（→ `api-plugin.json`）；`@ApiController` 只声明每个控制器属于哪个插件（`plugin`，必须等于 descriptor 的 `pluginId`）与哪个 API 版本（`version`）。
+- 插件级元数据（`name`/`description`/`author`/版本号）在 `apiPlugin { }` 里**声明一次**（→ `api-plugin.json`），插件的身份同样如此。`@ApiController` 只携带 API `version` 与子 `path`，**没有 `plugin` 属性需要对齐了**。
 - 每个接口的展示 `name` = `@Operation.summary`（缺省回退方法名）、`description` = `@Operation.description`（缺省为空），会体现在权限树与接口表里。
-- 每个端点方法标注 HTTP 映射注解；只有 `@GetMapping` / `@PostMapping` / `@PutMapping` / `@PatchMapping` / `@DeleteMapping` 会被解析。方法级 `@RequestMapping` **不在其列**——该端点被跳过，安装其余步骤照常进行，调用方拿到 404。`operationId`（缺省=方法名）决定 API 作用域码：`api:{plugin}:v{version}:{operationId}`。
-- `@ApiController(path = [...])` 在版本段之后追加一段基础路径，且**只取第一个元素**：`/api/{plugin}/v{version}/<path[0]>/<方法路径>`。
+- 每个端点方法标注 HTTP 映射注解；只有 `@GetMapping` / `@PostMapping` / `@PutMapping` / `@PatchMapping` / `@DeleteMapping` 会被解析。方法级 `@RequestMapping` **不在其列**——**安装会被拒绝**并点名该方法，而不是静默跳过、让调用方拿到 404。每个被映射的方法都必须有 `operationId`（缺失即拒绝），它决定 API 作用域码：`api:{plugin}:v{version}:{operationId}`。
+- `version` 必须**至少为 1**：声明 `version = 0` 或负数的控制器会拼出路由器永远匹配不到的路径，因此安装会直接拒绝，而不是写出一条谁也调不到的接口。
+- 同一插件内，两个端点不得占用相同的路径与 HTTP 方法——会在安装期被拒绝并点名两个方法，而不是留到之后变成 ambiguous mapping 报错。**不同**版本下路径相同是允许的：版本本身就在路径里。
+- `@ApiController(path = [...])` 在版本段之后追加一段基础路径：`/api/{plugin}/v{version}/<path[0]>/<方法路径>`。写成数组只是为了对齐 `@RequestMapping` 的形状，**实际只支持一个元素**——声明多个会在安装期被拒绝，而不是丢掉其余几个。
+- 方法级映射同理，一个方法只支持一个路径：`@GetMapping("/a", "/b")` 会在安装期被拒绝并点名该方法，而不是只挂 `/a`。需要多个路径就各自声明一个方法，或映射一个公共前缀。`value` 与 `path` 互为别名，用任意一个写路径即可——两个都写且内容不同会被拒绝，而不是替你挑一个。
+- `params` / `headers` / `produces` / `consumes` 都按声明的语义作为路由条件生效，所以「要求某个参数/请求头」的方法行为与 Spring 应用里一致。
 - 一个插件内可有**多个 `@ApiController(version=n)`** 共存实现向前兼容。`echo/` 即如此：`EchoController`（v1，含 `ping`/`version`）与 `EchoControllerV2`（v2，含 `ping`/`whoami`）在**同一插件**里共存——请求 `v2` 及以上时 `ping` 由 v2 覆盖（滚动兼容），`v1` 专属的 `version` 仍由 v1 兜底。
 
 ### 6.2 响应规则 `ApiResponse<T>`
@@ -352,22 +351,24 @@ SDK 提供的用户侧响应信封，与网关内部 `ResponseResult` 解耦：
 ```kotlin
 @Component
 class GeoLifecycle : PluginLifecycle {
-    override fun onInstall(context: PluginContext) {}    // 每次挂载后（可做 DDL/种子数据）
-    override fun onStart(context: PluginContext) {}      // 每次挂载后，紧跟 onInstall
-    override fun onStop(context: PluginContext) {}       // 每次卸载前
-    override fun onUninstall(context: PluginContext) {}  // 插件被摘掉之后
+    override fun onStart(context: PluginContext) {}      // 每次挂载、路由注册之前
+    override fun onStop(context: PluginContext) {}       // 每次卸载、正在服务的请求都结束之后
+    override fun onUninstall(context: PluginContext) {}  // 插件被摘除之时（升级也会走；数据源已关、类加载器仍在）
+    override fun onPurge(context: PluginContext) {}      // 明确要求清除数据的卸载
 }
 ```
 
-在 `apiPlugin { mainClass = "…" }` 里指定，或让网关自动发现。`echo/` 的 `EchoLifecycle` 在每个钩子里写入一条插件级设置（`installedAt` / `startedAt` / `stoppedAt` / `uninstalledAt`），演示 `PluginContext.saveSetting` 的用法。
+在 `apiPlugin { mainClass = "…" }` 里指定，或让网关自动发现。`echo/` 的 `EchoLifecycle` 在每个钩子里写入一条插件级设置（`startedAt` / `stoppedAt` / `uninstalledAt`），演示 `PluginContext.saveSetting` 的用法。
 
-**自动发现失败时是安静的，所以要主动核对。** `PluginLifecycle` 只有在它确实是一个被子容器扫描到的 Spring bean 时才会运行（见 §6.1）——放在控制器包树之外的实现不会被实例化，所有钩子静默跳过，而**安装照样报成功**。`mainClass` 只是一种偏好而非硬性要求：写了一个匹配不到任何 bean 的值不会让任何东西失败，网关会回退到它找到的第一个 `PluginLifecycle` bean（一旦你有多个，这就会开始有影响）；而一个生命周期 bean 都没有时，插件就是在完全没有生命周期的情况下挂载的。
+**`PluginLifecycle` 只有在它确实是一个被子容器扫描到的 Spring bean 时才会运行**（见 §6.1）：放在控制器包树之外的实现不会被实例化，所有钩子跳过，挂载时会打一条点名该组件的 WARN。描述符里的 `mainClass` 指明哪个生命周期 bean 是入口：不写时用插件唯一的 `PluginLifecycle` bean，**有多个 bean 又没写 `mainClass` 会导致安装失败**，而不是随便挑一个；写了 `mainClass` 却匹配不到任何 bean 同样会失败。一个生命周期 bean 都没有时，插件就是在完全没有生命周期的情况下挂载的。
 
-**挂载不是一次性事件，这些钩子因此也不是。** 网关会在插件安装时、网关启动重挂载时、`reload` 时，以及任何一次改到该插件数据源组成值的保存之后挂载它——而**每次挂载都会先跑 `onInstall` 再跑 `onStart`**。重挂载会先把插件拆掉，所以插件生命周期中途会出现自己的 `onStop`，不要指望只放在内存里的状态还在。`onUninstall` 值得多读两遍：**升级是先卸载旧版本再装新版本**，所以升级时它也会跑一次——绝不能当成"插件再也回不来了"而在那里删数据。网关只有在卸载显式要求时才清理插件的设置、SQLite 数据库与文件（`purgeData=true`），升级永远不会。
+**挂载不是一次性事件，这些钩子因此也不是。** 插件在安装、网关启动重挂载、`reload`、任何一次改到它数据源组成值的保存，以及**它处于挂载失败状态时的任意一次保存**之后都会重新挂载，而**每次挂载都会跑 `onStart`**。重挂载的顺序是**先把新实例建起来并跑完 `onStart`（此刻旧实例仍在服务），再拆掉旧实例**，所以中途会出现自己的 `onStop`（在新 `onStart` 之后），只放在内存里的状态会随之丢失——也意味着 `onStart` 可能和上一份实例同时在跑。`onUninstall` 值得多读两遍：**升级会在装新版本的过程中把旧版本拆掉**，所以升级时它也会跑一次——绝不能当成"插件再也回不来了"而在那里删数据。清理插件的设置、SQLite 数据库与文件只在卸载显式要求时发生（`purgeData=true`，触发 `onPurge`），升级永远不会。
 
 ### 6.5 自带依赖
 
-插件可**打包自己的第三方库**（子优先 ClassLoader 隔离）。仅下列前缀委托给网关父加载器（保证注解/序列化类身份一致）：`java.* javax.* jakarta.* sun.* jdk.* org.springframework.* org.slf4j.* tools.jackson.* com.fasterxml.* io.swagger.* org.springdoc.* com.baomidou.* kotlin.* kotlinx.* top.fatweb.apimanagement.*`。其余类名从插件 jar 优先加载。若需打包依赖，用 shadow/fat jar 将依赖类合并进插件 jar。
+插件可**打包自己的第三方库**（子优先 ClassLoader 隔离）。仅下列前缀委托给网关父加载器（保证注解/序列化类身份一致）：`java.* javax.* jakarta.* sun.* jdk.* org.springframework.* org.slf4j.* tools.jackson.* com.fasterxml.* io.swagger.* org.springdoc.* com.baomidou.* com.zaxxer.hikari.* com.mysql.cj.jdbc.* org.sqlite.* kotlin.* kotlinx.* top.fatweb.apimanagement.*`。其余类名从插件 jar 优先加载。若需打包依赖，用 shadow/fat jar 将依赖类合并进插件 jar。
+
+这些前缀**只从父加载器解析，不再回退到 jar**：把依赖类放进上述命名空间（例如把插件自己的代码放进 `top.fatweb.apimanagement.*`，或把网关已有的连接池/驱动类也打进 jar）不会生效——插件无法遮蔽网关已有的同名类，加载失败会直接暴露而不是悄悄换一份。需要打包的库请使用上述清单之外的包名。
 
 > SDK 只声明 `spring-web` / `spring-context` / `swagger-annotations`，**不含日志依赖**：要写日志就自己引 `slf4j-api` 来编译，但 `org.slf4j.` 是向上委派的，运行期你的日志调用落在网关的绑定上，自己打进去的那份根本不会被加载。其余自己持有的资源记得在 `onStop` 里释放。
 
@@ -448,12 +449,12 @@ class GeoLifecycle : PluginLifecycle {
 
 - **`datasources` 数组是独立数据源的唯一声明**：每个条目为一项连接事实点名一个配置 key，于是这些事实就是普通配置项，表单、约束、密钥加密全部复用。**没有这个数组 = 不使用独立库**，网关既不构建也不注入，管理端也拒绝为其保存数据源。详见 §6.3。
 - **默认值只在 schema 里声明一次**：DB 只存管理员显式覆盖过的项，`getSetting` 查不到行时返回 schema 默认值。所以插件升级改默认值能生效，插件代码里也不必再写一份兜底。
-- **所有权**：schema 声明过的 key 归管理员，插件 `saveSetting` 写它会抛异常；未声明的 key 仍是插件的运行态空间（`installedAt` 这类照旧可写）。
-- **secret 项**：网关加密存储（AES-GCM，密钥派生自 `app.security.tokenSecret`），管理端接口**永不回传明文**——secret 的 `value` 恒为 `null`，唯一能表示"存过没有"的是 `hasValue`。因此**保持原值的做法是提交时不带这个 key**，带任何别的值就是覆盖，留空就是清除。**没有掩码可以回传**：控制台若自己造一个 `******` 回传，每次保存都会把已存的密钥覆盖掉。插件读到的始终是明文。`unreadable: true` 表示该 secret 的密文在 `tokenSecret` 轮换后已解不开——只能重新录入，在此之前插件自己 `getSetting` 读它会抛 `IllegalStateException`。注意轮换 `tokenSecret` 会让所有 secret 与所有外链同时失效。另外 `hasValue` **每个字段都有**（不止 secret）：它表示"管理员自己设过值"，反之表示读到的是声明的默认值。
+- **所有权**：schema 声明过的 key 归管理员，插件 `saveSetting` 写它会抛异常；未声明的 key 仍是插件的运行态空间（`startedAt` 这类照旧可写）。
+- **secret 项**：网关加密存储（AES-GCM，密钥派生自 `app.security.tokenSecret`），接口**永不回传明文**——`value` 恒为 `null`，用 `hasValue` 表示存过没有。**保持原值就是提交时不带这个 key**：带别的值是覆盖，留空是清除；没有掩码可以回传，控制台若自造一个 `******` 回传，每次保存都会覆盖掉已存密钥。插件读到的始终是明文。`unreadable: true` 表示密文在 `tokenSecret` 轮换后已解不开，只能重新录入（在此之前 `getSetting` 读它抛 `IllegalStateException`）；轮换会让所有 secret 与所有外链同时失效。`hasValue` 每个字段都有，表示管理员自己设过值，否则读到的是声明的默认值。
 - **校验是网关侧权威的**：未声明的 key、类型不符、超范围、enum 越界都会被拒绝保存。同一分组或同一 key 重复提交会被判为结构性错误；又因为数据源背后的值就是网关构建连接的依据，保存前还会先过一遍连接规则（host 形状、端口范围、库名、驱动参数黑名单）——根本连不上的组合会被拒，而不是先存下来。
 - **schema 非法即拒绝安装**（刻意的 fail-fast）：文件不存在 = 无配置项，文件存在但解析失败 = 安装失败并报错；schema 内分组/字段 key 重复、或 `mysql` 数据源没有同时给出 `host` 与 `database` 槽位，同样安装失败。
-- **生效时机**：普通配置项**改完即生效**（每次 `getSetting` 都读库），不需要重新挂载。构成数据源的配置项不同——连接是网关构建的，改它会重挂载插件（见 §8）。这个判断依据的是**值确实变了**而不是"有人提交了请求"，所以保存无关配置项不会重启你的插件。
-- **编辑器 / 构建期反馈**：网关仓库随附一份与这些校验对应的 JSON Schema：[`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json)。把它接给编辑器或构建步骤时要用 **raw 地址** `https://raw.githubusercontent.com/FatttSnake/api-management/master/docs/plugin-config.schema.json` （`.vscode/settings.json` 里加一条 `json.schemas`、`fileMatch` 设为 `["**/META-INF/plugin-config.json"]`；JetBrains 用 JSON Schema Mapping；CI 里可以用 `check-jsonschema`）。别把上面那个 `github.com/.../blob/...` 网页地址交给工具：它返回的是 HTML，拿到它的客户端会**静默**加载失败——JetBrains 右下角照样显示识别到了 schema，但补全和校验一概不来。**但不要把它写进文件本身**：`$schema` 键本身就是网关不认识的属性，顶层只接受 `groups`、`datasources`，写了会直接导致安装失败。
+- **生效时机**：普通配置项**改完即生效**（每次 `getSetting` 都读库），不需要重新挂载。构成数据源的配置项不同——连接是网关构建的，改它会重挂载插件（见 §8）。这个判断依据的是**值确实变了**而不是"有人提交了请求"，所以保存无关配置项不会重启你的插件。唯一例外是插件当前处于挂载失败状态（`load_error` 有值）：此时**任意一次保存都会重挂载它**，好让管理员修好之后不用手动 `reload` 就能自动叫回来。
+- **编辑器 / 构建期反馈**：网关仓库随附一份与这些校验对应的 JSON Schema：[`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json)。接给编辑器或 CI 时要用 **raw 地址** `https://raw.githubusercontent.com/FatttSnake/api-management/master/docs/plugin-config.schema.json`（`.vscode/settings.json` 里加一条 `json.schemas`、`fileMatch` 设为 `["**/META-INF/plugin-config.json"]`；JetBrains 用 JSON Schema Mapping；CI 可用 `check-jsonschema`）。用 `github.com/.../blob/...` 网页地址会拿到 HTML，客户端**静默**加载失败。**别把它写进文件本身**：`$schema` 是网关不认识的属性，顶层只接受 `groups`、`datasources`，写了会导致安装失败。
 
 ### 6.7 文件存储与外链 `PluginStorage`
 
@@ -552,7 +553,7 @@ GET /api/echo/v2/whoami   # v2 专属
 | 修改配置 | `PUT /system/api/plugin/config` | 按分组保存：`{pluginId, groups:[{key, values:[{key,value}]}]}`。普通配置项立即生效；没传的键保持原值，传空则清除该键（文本类的空串是一个值）。`required` 只对本次点名的分组校验。**改到构成数据源的配置项会自动重挂载插件**，不需要额外步骤 |
 | 配置数据源 | 同上（配置接口） | MySQL 数据源由其 `datasources` 条目点名的那些配置项描述。清空 host 即取消配置，这不是错误——插件只是不再拿到该数据源 |
 | 重新挂载 | `POST /system/api/plugin/{pluginId}/reload` | 用已存储的 jar 原地重挂载：版本、DB 行、权限树、配置、数据全部保留。用于**换了 jar**；改数据源不需要它 |
-| 升级 | 改 `apiPlugin.versionCode` 后重新构建上传 | 旧版自动替换；`versionCode <= 当前` 会被拒绝。**升级不清除插件配置与数据**（设置、数据源、文件区都保留），也不会把管理员禁用过的插件重新启用——`reload` 与改数据源的配置保存同样不会。内部实现是先卸载旧版本再安装新版本，所以插件会依次看到 `onStop` → `onUninstall` → `onInstall` → `onStart`，不要把 `onUninstall` 当成插件的终点（见 §6.4） |
+| 升级 | 改 `apiPlugin.versionCode` 后重新构建上传 | 旧版自动替换；`versionCode <= 当前` 会被拒绝。**升级不清除插件配置与数据**（设置、数据源、文件区都保留），也不会把管理员禁用过的插件重新启用——`reload` 与改数据源的配置保存同样不会。内部实现是先把新版本建起来并跑完 `onStart`，再拆掉旧版本，所以插件会依次看到 `onStart`（新）→ `onStop` → `onUninstall`（旧），不要把 `onUninstall` 当成插件的终点（见 §6.4） |
 | 卸载 | `DELETE /system/api/plugin/{pluginId}?purgeData=false` | 路由注销、DB 行删除、权限树清理。`purgeData` 默认为 `false`，即**保留**插件设置、SQLite 数据库目录与文件区，重装同一 pluginId 即可直接续用；`purgeData=true` 才清除这几类。**外部 MySQL 库不在此列**——网关不会去删 DBA 库里的表 |
 | 重启 | 无需操作 | 已装插件从 blob 自动重挂载，无需重传 |
 
@@ -567,7 +568,7 @@ GET /api/echo/v2/whoami   # v2 专属
 - **`verifyPlugin` 失败**：jar 内公钥与签名私钥不配对（例如误删了其中一个文件）——删除整个 `keys/` 重新 `build`。
 - **设置写入报唯一键冲突**：设置存在 `t_b_api_plugin_setting`，其唯一键是 `(plugin_id, setting_key)`——每个插件每个 key 一行，没有软删除列。网关侧不存在需要修复的唯一键冲突：`saveSetting` 是先读后写；而 `purgeData=false` 时设置会跨重装保留，所以真正要找的是"某个插件既把 key 写进自己的运行态、又在配置 schema 里声明了同一个 key"这种情况（声明过的 key 归管理员，`saveSetting` 会直接拒绝）。
 - **升级后接口消失**：新 jar 里必须仍含全部需要保留的 `@ApiController`；卸载旧版后只保留新 jar 声明的接口。
-- **插件装上了，但生命周期钩子一个都不跑 / 自己的 `@Service` 注入不进来**：该组件落在子容器扫描范围之外（§6.1）——把它放到与 `@ApiController` 同一棵包树下。`mainClass` 写了一个不是 bean 的类名同样不会失败，网关会静默改用找到的第一个 `PluginLifecycle` bean（§6.4）。
-- **端点 404**：方法级 `@RequestMapping` 不会被解析（§6.1）——改用 `@GetMapping` / `@PostMapping` 等。同时检查 `@ApiController.plugin` 是否等于描述符 `pluginId`，以及 URL 里的版本是否**大于等于**控制器声明的 `version`。
+- **插件装上了，但生命周期钩子一个都不跑 / 自己的 `@Service` 注入不进来**：该组件落在子容器扫描范围之外（§6.1）——挂载时会打一条点名该组件的 WARN，找到它并把组件移到与 `@ApiController` 同一棵包树下。`mainClass` 写了一个不是 bean 的类名、或有多个 `PluginLifecycle` bean 却没写 `mainClass`，现在都会**导致安装失败**（§6.4），而不是静默挑一个。
+- **端点 404**：检查 URL 里的版本是否**大于等于**控制器声明的 `version`，以及控制器是否声明了 `version = 0`（安装会直接拒绝，因为谁也调不到）。方法级 `@RequestMapping` 不会是原因——它会在安装期被拒绝（§6.1）。
 - **`@Scheduled` 不触发**：插件的子容器没有自动配置、也不开启调度（§6.1）——确实需要就在自己的配置里打开。
 - **怎么知道插件为什么没挂载**：挂载失败会记录在插件行上，并通过它的 `loadError` 字段暴露（挂载成功时为 `null`），从插件列表或 `GET /system/api/plugin/{pluginId}/info` 都能读到。如果插件在列表里、也是启用状态，行为却像不存在一样，那通常是上面两条说的扫描或生命周期发现问题，而不是安装失败。
