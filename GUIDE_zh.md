@@ -21,6 +21,8 @@ Gradle 插件与 SDK 从**网关仓库**一起构建发布。首次使用前先�
 
 之后你新建的插件工程会在 `settings.gradle.kts` 的 `pluginManagement` 里加 `mavenLocal()` 来解析它们。已发布到私有 Nexus 时同理，把对应仓库地址加进去即可（也可用 `-PapiPlugin.sdkVersion=<版本>` 覆盖 SDK 版本）。
 
+拉到更新的网关仓库之后要重新执行一次：插件工程跑的这些任务都来自这个 Gradle 插件，所以只有自那次重新发布之后，插件工程里才会出现 `deployPlugin`（§2.4）。
+
 ---
 
 ## 1. 整体模型
@@ -90,7 +92,7 @@ version = "1.0.0"                            // 默认也作为 versionName
 apiPlugin {
     pluginId = "geo"                          // 唯一 ID，^[a-z][a-z0-9-]*$
     pluginName = "Geo 插件"                    // 显示名
-    versionCode = 1                           // 必填；发版递增（网关据此判定升级）
+    versionCode = 1                           // 必填；高于已装版本为升级，相同则为原地重部署
     description = "把地理编码能力开放成 API"      // 可选
     author = "你的名字"                         // 可选
     mainClass = "com.example.geo.GeoLifecycle" // 有 PluginLifecycle 时可选
@@ -104,7 +106,7 @@ apiPlugin {
 | `pluginId` | ✅ | 工程名 | `pluginId`（插件的唯一身份来源；`@ApiController` 不再重复它） |
 | `pluginName` | | 同 `pluginId` | `name` |
 | `versionName` | | 工程 `version`（空串同样回退） | `versionName` |
-| `versionCode` | ✅ | —（必填，无默认） | `versionCode`（升级须单调递增） |
+| `versionCode` | ✅ | —（必填，无默认） | `versionCode`（更高为升级；与已装版本相同则可重新部署） |
 | `description` / `author` | | 空 | 同名 |
 | `mainClass` | | 无 | `mainClass`（缺省时用插件唯一的 `PluginLifecycle` bean；有多个 bean 又没写 `mainClass` 会导致安装失败） |
 | `sdkVersion` | | 插件自带 SDK 版本 | （不写描述符，只控制依赖版本） |
@@ -120,17 +122,28 @@ build/
 .gradle/
 ```
 
-### 2.4 三个命令
+### 2.4 四个命令
 
 ```shell
 ./gradlew build           # 一键：生成 keys/ + 描述符 + pub.pem + 签名
 ./gradlew genPluginKeys   # 单独重新生成/确认密钥（已有则跳过）
 ./gradlew verifyPlugin    # 自检 jar 签名（签名无效会失败退出）
+./gradlew deployPlugin    # 构建 + 签名 + 验签 + 上传，直接推到运行中的网关
 ```
 
 产物：`build/libs/<pluginId>-<versionName>.jar`，**已签名**，可直接上传。
 
-插件在 `api plugin` 任务组下共注册五个任务：`generatePluginDescriptor` 与 `preparePluginPubKey`（都挂在 `jar` 上，构建时会自动跑到）、`genPluginKeys`、`signPlugin`（挂在 `build` 上）与 `verifyPlugin`。上面这三条是需要手动执行的，其余由构建代劳。
+插件在 `api plugin` 任务组下共注册六个任务：`generatePluginDescriptor` 与 `preparePluginPubKey`（都挂在 `jar` 上，构建时会自动跑到）、`genPluginKeys`、`signPlugin`（挂在 `build` 上）、`verifyPlugin` 与 `deployPlugin`。上面这四条是需要手动执行的，其余由构建代劳。
+
+`deployPlugin` 就是 §7 第 3 步的手工上传，改一行就重新部署的循环用它：
+
+```shell
+./gradlew deployPlugin -PapiPlugin.serverUrl=http://localhost:8111 -PapiPlugin.accessToken=<token>
+```
+
+两项配置也都可以走环境变量（`API_PLUGIN_SERVER_URL`、`API_PLUGIN_ACCESS_TOKEN`），且都不该写进 `build.gradle.kts`。token 即控制台登录响应里的 `accessToken`，默认有效期 2 小时；没有任何东西会轮换它，所以在这段时间内一直可用（除非网关的 Redis 没有做持久化又被重启）。加 `-PapiPlugin.trustSigner=true` 可以在同一次运行里顺便把该 jar 的签名公钥登记到网关——属于一次性便利，因为公钥登记之后会一直受信。
+
+想在插件源码里下断点、以及哪些改动不用重新部署就能生效，见网关仓库的 [docs/plugin-debugging_zh.md](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-debugging_zh.md)。
 
 ### 2.5 手动方式（不用 Gradle 插件时）
 
@@ -180,11 +193,11 @@ tasks.build { dependsOn(signPlugin) }
 | `pluginId` | ✅ | 唯一 ID，`^[a-z][a-z0-9-]{0,63}$`——最多 64 字符，与网关 `plugin_id` 列宽一致。所有端点都挂在 `/api/{plugin}/v{version}/…` 之下 |
 | `name` | ✅ | 插件显示名（菜单/权限树/文档用） |
 | `versionName` | ✅ | 人类可读版本，如 `1.2.0`；手写描述符**必填**（用 Gradle 插件则缺省取工程 `version`） |
-| `versionCode` | | **单调递增**整数；升级必须大于当前已装版本，否则拒绝 |
+| `versionCode` | | 整数，至少 1。**高于**已装版本即升级；**等于**已装版本允许，会原地替换代码（改一行就重新部署的循环正是反复做这件事）；**低于**已装版本会被拒绝 |
 | `description` / `author` | | 描述 / 作者 |
 | `mainClass` | | `PluginLifecycle` 实现类全限定名（需 `@Component`，且必须落在被扫描的包内——见 §6.1）。缺省时用插件唯一的 `PluginLifecycle` bean；写了匹配不到任何 bean 的值，或有多个生命周期 bean 又没写 `mainClass`，都会**导致安装失败** |
 
-> `versionCode` 参考 Android versionCode 语义：**同一 pluginId 只允许装一个实例，升级只能往更高 versionCode 升**。
+> `versionCode` 只沿用 Android 语义的前半段：**同一 pluginId 只允许装一个实例**。后半段不同——升级必须往更高的 `versionCode` 走，但**重装当前已安装的版本是允许的**，会原地替换；只有**更低**的版本会被拒绝。所以开发期间反复迭代不必每次递增。
 
 ---
 
@@ -274,7 +287,7 @@ fun geocode(@RequestParam("address") address: String): ApiResponse<GeocodeRespon
 
 ## 6. 编写控制器与业务代码
 
-SDK 的 `implementation` 依赖已由 Gradle 插件自动加入，并透传 spring-web / spring-context / swagger 注解，直接写控制器即可。
+SDK 的 `implementation` 依赖已由 Gradle 插件自动加入，并透传 spring-web / spring-context / swagger 注解 / Kotlin Jackson 模块 / SLF4J，直接写控制器即可。
 
 ### 6.1 `@ApiController`
 
@@ -344,7 +357,7 @@ SDK 提供的用户侧响应信封，与网关内部 `ResponseResult` 解耦：
 - **`SQLITE` ——零配置**：声明即供给，网关在挂载时按 `app.storage.plugin-datasource-dir/{pluginId}/{name}.db` 建库建池，不落配置行、管理员不需要做任何事。两级路径都来自声明，没有任何提交值能进到路径里。
 - **`MYSQL` ——就是几条普通配置项**：声明里每个槽位点名一个配置 key（`host` / `port` / `database` / `username` / `password` / `params`）。JDBC URL 由网关拼装，`params` 以**连接属性**下发给驱动，插件作者与管理员都不写连接串。**host 有值即视为已配置**，在那之前该数据源不会出现在 `context.datasources` 里，插件应返回明确错误提示。
 
-一个插件可以声明多个数据源，两种方言也可以混用。数据源在**挂载时构建**，而保存构成数据源的配置项时**网关会自动重挂载插件**（见 §8）——所以插件要能接受保存之后 `onStop` / `onStart` 再跑一遍，只存在内存里的状态会随之丢失。
+一个插件可以声明多个数据源，两种方言也可以混用。数据源在**挂载时构建**，而保存构成数据源的配置项时**网关会自动重挂载插件**（见 §8）——所以插件要能接受保存之后 `onStop` / `onStart` 再跑一遍，只存在内存里的状态会随之丢失。被管理员禁用的插件是唯一例外：在重新启用之前，任何保存都不会把它挂起来。
 
 ### 6.4 生命周期 `PluginLifecycle`
 
@@ -353,8 +366,8 @@ SDK 提供的用户侧响应信封，与网关内部 `ResponseResult` 解耦：
 class GeoLifecycle : PluginLifecycle {
     override fun onStart(context: PluginContext) {}      // 每次挂载、路由注册之前
     override fun onStop(context: PluginContext) {}       // 每次卸载、正在服务的请求都结束之后
-    override fun onUninstall(context: PluginContext) {}  // 插件被摘除之时（升级也会走；数据源已关、类加载器仍在）
-    override fun onPurge(context: PluginContext) {}      // 明确要求清除数据的卸载
+    override fun onUninstall(context: PluginContext) {}  // 这一版要走了（升级也会走；数据源已关、类加载器仍在）——绝不在这里删数据
+    override fun onPurge(context: PluginContext) {}      // 明确要求清除数据的卸载；在这里抛异常会拒绝该次卸载
 }
 ```
 
@@ -362,7 +375,13 @@ class GeoLifecycle : PluginLifecycle {
 
 **`PluginLifecycle` 只有在它确实是一个被子容器扫描到的 Spring bean 时才会运行**（见 §6.1）：放在控制器包树之外的实现不会被实例化，所有钩子跳过，挂载时会打一条点名该组件的 WARN。描述符里的 `mainClass` 指明哪个生命周期 bean 是入口：不写时用插件唯一的 `PluginLifecycle` bean，**有多个 bean 又没写 `mainClass` 会导致安装失败**，而不是随便挑一个；写了 `mainClass` 却匹配不到任何 bean 同样会失败。一个生命周期 bean 都没有时，插件就是在完全没有生命周期的情况下挂载的。
 
-**挂载不是一次性事件，这些钩子因此也不是。** 插件在安装、网关启动重挂载、`reload`、任何一次改到它数据源组成值的保存，以及**它处于挂载失败状态时的任意一次保存**之后都会重新挂载，而**每次挂载都会跑 `onStart`**。重挂载的顺序是**先把新实例建起来并跑完 `onStart`（此刻旧实例仍在服务），再拆掉旧实例**，所以中途会出现自己的 `onStop`（在新 `onStart` 之后），只放在内存里的状态会随之丢失——也意味着 `onStart` 可能和上一份实例同时在跑。`onUninstall` 值得多读两遍：**升级会在装新版本的过程中把旧版本拆掉**，所以升级时它也会跑一次——绝不能当成"插件再也回不来了"而在那里删数据。清理插件的设置、SQLite 数据库与文件只在卸载显式要求时发生（`purgeData=true`，触发 `onPurge`），升级永远不会。
+**挂载不是一次性事件，这些钩子因此也不是。** 插件在安装、网关启动重挂载、`reload`、任何一次改到它数据源组成值的保存，以及**它处于挂载失败状态时的任意一次保存**之后都会重新挂载，而**每次挂载都会跑 `onStart`**。重挂载的顺序是**先把新实例建起来并跑完 `onStart`（此刻旧实例仍在服务），再拆掉旧实例**，所以中途会出现自己的 `onStop`（在新 `onStart` 之后），只放在内存里的状态会随之丢失——也意味着 `onStart` 可能和上一份实例同时在跑。最后这一点直接决定你**能怎么改自己的库表**：新版本可以在 `onStart` 里做迁移（它的数据源是开着的），但那一刻**被替换的旧版本仍在按旧 schema 服务**，而旧版本自己的 `onUninstall` 跑的时候**数据源已经关了**。所以任何"改掉旧版本正在读的东西"的迁移——删列、改名——都是旧实例扛不住的。要做就**只加表、只加列**，别去动既有的东西，等发布过一两轮再开始依赖新增部分。
+
+**禁用插件不等于卸载插件。** `enable: false` 会把插件的 runtime 拆掉：路由注销、网关下次启动时不再加载它、请求它的接口返回 `Api disabled` 而不会进到你的代码。它的设置、数据源、文件区与接口上的授权全部原地保留，重新启用就是把同一个 jar 挂回它们之上。没有任何东西会自动把它拉回来——保存配置不会重挂载一个被禁用的插件，**在被禁用的插件上上传新版本也只会存下来、不会启动它**。
+
+**决定 `onUninstall` 是否运行的是「声明的版本有没有变」**，而不是「插件是不是要没了」。升级会跑它，重装同一个已装版本不会跑——`reload`、改数据源触发的重挂载、网关关闭也都不会跑，因为这几种都是把同一个 jar 重新挂起来。它在那一版被拿出网关时运行，而它**绝不是删数据的地方**：它**每次发版升级都会跑**，在这里释放自己的 storage 或设置，就等于每次升级都丢一次，而不是只在管理员明确要求时才丢。删数据是 `onPurge` 的职责，升级永远不会触发它。
+
+**`onPurge` 是唯一一个「失败会拒绝该次卸载」的钩子。** 插件自己拥有的表（包括网关从不触碰的 MySQL 库里的表）就是在它里面删的，它运行时插件的数据源、storage 与设置都还可用。被管理员禁用的插件会为此**被临时挂起来跑最后一次**（刻意不跑它的 `onStart`），因为一个没在运行的插件同样得有能力删掉自己的数据。它一旦抛异常，网关会回给管理员 `40068`、把原因记进插件行的 `loadError`，并且**什么都不删**——行、配置、文件全都还在，修好原因后再执行一次卸载即可。
 
 ### 6.5 自带依赖
 
@@ -370,7 +389,7 @@ class GeoLifecycle : PluginLifecycle {
 
 这些前缀**只从父加载器解析，不再回退到 jar**：把依赖类放进上述命名空间（例如把插件自己的代码放进 `top.fatweb.apimanagement.*`，或把网关已有的连接池/驱动类也打进 jar）不会生效——插件无法遮蔽网关已有的同名类，加载失败会直接暴露而不是悄悄换一份。需要打包的库请使用上述清单之外的包名。
 
-> SDK 只声明 `spring-web` / `spring-context` / `swagger-annotations`，**不含日志依赖**：要写日志就自己引 `slf4j-api` 来编译，但 `org.slf4j.` 是向上委派的，运行期你的日志调用落在网关的绑定上，自己打进去的那份根本不会被加载。其余自己持有的资源记得在 `onStop` 里释放。
+> SDK 声明 `spring-web` / `spring-context` / `swagger-annotations` / `slf4j-api` / Jackson 3（`jackson-module-kotlin`）：直接用 `LoggerFactory` 写日志、用 `jacksonObjectMapper()` 做序列化即可。`org.slf4j.` 与 `tools.jackson.` 都是向上委派的，运行期你的日志调用落在网关的绑定上、你的 mapper 就是网关的 Jackson——**不要打包 `slf4j-api`、日志后端或 Jackson**，打进去的那份根本不会被加载。其余自己持有的资源记得在 `onStop` 里释放。
 
 ### 6.6 插件配置声明 `META-INF/plugin-config.json`
 
@@ -501,6 +520,8 @@ POST /system/api/plugin/key   {"publicKey": "<...>", "alias": "FatttSnake"}
 
 # 3. 上传安装
 POST /system/api/plugin/install   (multipart: file=@echo-1.0.0.jar，最大 50 MB)
+#    也可以交给 Gradle 插件：./gradlew deployPlugin -PapiPlugin.serverUrl=… -PapiPlugin.accessToken=…
+#    （重传当前已安装的版本会原地替换，所以调试循环不必递增 apiPlugin.versionCode）
 
 # 3.1 声明了 SQLite 数据源的插件（如 filebox 的 cache）：装完即用，无事可做
 GET  /system/api/plugin/filebox/config
@@ -547,14 +568,14 @@ GET /api/echo/v2/whoami   # v2 专属
 
 | 操作 | 方式 | 说明 |
 |---|---|---|
-| 禁用 / 调价 | `PUT /system/api/plugin` | `enable: false` 立即生效，调用返回 `Api disabled` |
+| 启用 / 禁用 | `PATCH /system/api/plugin` | `{id, enable}`。禁用会把插件的 runtime **拆掉**：不再服务、网关下次启动不再加载它、请求它的接口返回 `Api disabled`；它的配置、数据源、文件与接口授权全部保留，重新启用就是把同一个 jar 挂回它们之上。`PUT /system/api/plugin` 也可以在改插件级默认单价/限流/门禁时带上同一个开关 |
 | 查看配置 | `GET /system/api/plugin/{pluginId}/config` | 返回插件的配置声明 + 折叠进去的当前值：每个字段有 `value`、`default`、`hasValue`、`unreadable`（secret 的 `value` 恒为 `null`）；另有构成数据源的配置项，以及每个数据源的 `name`、`dbType`、`required`、`configured` |
 | 试连 | `POST /system/api/plugin/{pluginId}/config/datasource/test` | `{name, values}`；没传的项、或传了但没给值，都用已存值。**仅 MySQL**（SQLite 是网关自备的文件）；指向别的数据源的值、或 `main` 尚未配置会被拒，真正的失败回 40067 与驱动原文 |
 | 修改配置 | `PUT /system/api/plugin/config` | 按分组保存：`{pluginId, groups:[{key, values:[{key,value}]}]}`。普通配置项立即生效；没传的键保持原值，传空则清除该键（文本类的空串是一个值）。`required` 只对本次点名的分组校验。**改到构成数据源的配置项会自动重挂载插件**，不需要额外步骤 |
 | 配置数据源 | 同上（配置接口） | MySQL 数据源由其 `datasources` 条目点名的那些配置项描述。清空 host 即取消配置，这不是错误——插件只是不再拿到该数据源 |
 | 重新挂载 | `POST /system/api/plugin/{pluginId}/reload` | 用已存储的 jar 原地重挂载：版本、DB 行、权限树、配置、数据全部保留。用于**换了 jar**；改数据源不需要它 |
-| 升级 | 改 `apiPlugin.versionCode` 后重新构建上传 | 旧版自动替换；`versionCode <= 当前` 会被拒绝。**升级不清除插件配置与数据**（设置、数据源、文件区都保留），也不会把管理员禁用过的插件重新启用——`reload` 与改数据源的配置保存同样不会。内部实现是先把新版本建起来并跑完 `onStart`，再拆掉旧版本，所以插件会依次看到 `onStart`（新）→ `onStop` → `onUninstall`（旧），不要把 `onUninstall` 当成插件的终点（见 §6.4） |
-| 卸载 | `DELETE /system/api/plugin/{pluginId}?purgeData=false` | 路由注销、DB 行删除、权限树清理。`purgeData` 默认为 `false`，即**保留**插件设置、SQLite 数据库目录与文件区，重装同一 pluginId 即可直接续用；`purgeData=true` 才清除这几类。**外部 MySQL 库不在此列**——网关不会去删 DBA 库里的表 |
+| 升级 | 调大 `apiPlugin.versionCode` 后重新构建上传 | 旧版**原地替换**；只有**更低**的 `versionCode` 会被拒绝（40066）。**管理员设过的东西全部保留**：插件级默认单价/限流/门禁、每个接口自己的单价、计费模式、是否需要 key、限流、访问模式与启用状态、这些接口上的全部角色授权，外加设置、数据源与文件区。只有新版本不再提供的接口会连同它的行与授权一起消失。重传当前已安装的版本做的是同一件事，且是允许的——调试循环用的就是它。被管理员禁用的插件不会被重新启用、也不会被启动；`reload`、改数据源的配置保存以及其它任何保存同样不会。内部实现是先把新版本建起来并跑完 `onStart`，再拆掉旧版本，所以插件会依次看到 `onStart`（新）→ `onStop` → `onUninstall`（旧）（见 §6.4） |
+| 卸载 | `DELETE /system/api/plugin/{pluginId}?purgeData=false` | 路由注销、DB 行删除、权限树清理。`purgeData` 默认为 `false`，即**保留**插件设置、SQLite 数据库目录与文件区，重装同一 pluginId 即可直接续用；`purgeData=true` 才清除这几类。**外部 MySQL 库不在此列**——网关不会去删 DBA 库里的表，那是 `onPurge` 的活。**没在运行**的插件（被禁用，或挂载失败）会为此被临时挂起来跑最后一次退出钩子；`onPurge` 一旦抛异常，卸载会被**拒绝**（40068）且什么都不删 |
 | 重启 | 无需操作 | 已装插件从 blob 自动重挂载，无需重传 |
 
 ---
@@ -563,12 +584,13 @@ GET /api/echo/v2/whoami   # v2 专属
 
 - **换插件身份 / 想让旧版本失效**：删除 `keys/private.pem` 后重新 `build` 会生成新公钥；请同步把新 `keys/public.pem` 交给管理员更新信任库（旧插件重启后不再重挂载）。
 - **`Plugin signer is not trusted`**：公钥未上传到信任库，或已被禁用；用 `POST /system/api/plugin/key` 加入并启用。（完全没有签名的 jar 回的是另一条 `Plugin signature invalid`——确认你传的是 `build` 产物而不是 `./gradlew jar` 的产物。）
-- **`Version code N is not greater than current M`**：同 pluginId 已存在更高版本；升级需增大 `apiPlugin.versionCode`。
+- **`Version code N is older than the installed M`**：要部署的版本低于已安装的版本；升级需调大 `apiPlugin.versionCode`。重传当前已安装的版本是允许的，所以只有发版才需要动它。
 - **`./gradlew jar` 得到的 jar 没有签名**：签名只在 `build` / `signPlugin` 里做，请用 `./gradlew build` 产出物。
 - **`verifyPlugin` 失败**：jar 内公钥与签名私钥不配对（例如误删了其中一个文件）——删除整个 `keys/` 重新 `build`。
 - **设置写入报唯一键冲突**：设置存在 `t_b_api_plugin_setting`，其唯一键是 `(plugin_id, setting_key)`——每个插件每个 key 一行，没有软删除列。网关侧不存在需要修复的唯一键冲突：`saveSetting` 是先读后写；而 `purgeData=false` 时设置会跨重装保留，所以真正要找的是"某个插件既把 key 写进自己的运行态、又在配置 schema 里声明了同一个 key"这种情况（声明过的 key 归管理员，`saveSetting` 会直接拒绝）。
 - **升级后接口消失**：新 jar 里必须仍含全部需要保留的 `@ApiController`；卸载旧版后只保留新 jar 声明的接口。
 - **插件装上了，但生命周期钩子一个都不跑 / 自己的 `@Service` 注入不进来**：该组件落在子容器扫描范围之外（§6.1）——挂载时会打一条点名该组件的 WARN，找到它并把组件移到与 `@ApiController` 同一棵包树下。`mainClass` 写了一个不是 bean 的类名、或有多个 `PluginLifecycle` bean 却没写 `mainClass`，现在都会**导致安装失败**（§6.4），而不是静默挑一个。
-- **端点 404**：检查 URL 里的版本是否**大于等于**控制器声明的 `version`，以及控制器是否声明了 `version = 0`（安装会直接拒绝，因为谁也调不到）。方法级 `@RequestMapping` 不会是原因——它会在安装期被拒绝（§6.1）。
+- **端点 404**：检查 URL 里的版本是否**大于等于**控制器声明的 `version`，以及控制器是否声明了 `version = 0`（安装会直接拒绝，因为谁也调不到）。方法级 `@RequestMapping` 不会是原因——它会在安装期被拒绝（§6.1）。有一种"404"其实不是 404：请求**已被管理员禁用**的插件的接口，返回的是 `Api disabled`，网关会区分这两种情况。
+- **插件被禁用了却还在干活**：检查它在路由之外做了什么。禁用会把 runtime 拆掉并让它保持不运行（下次启动也不加载），但拆的是**runtime**——如果插件的工作是由外部发起的（它在别处注册过 webhook、或某个服务会来轮询它），那部分不是网关能停掉的。
 - **`@Scheduled` 不触发**：插件的子容器没有自动配置、也不开启调度（§6.1）——确实需要就在自己的配置里打开。
 - **怎么知道插件为什么没挂载**：挂载失败会记录在插件行上，并通过它的 `loadError` 字段暴露（挂载成功时为 `null`），从插件列表或 `GET /system/api/plugin/{pluginId}/info` 都能读到。如果插件在列表里、也是启用状态，行为却像不存在一样，那通常是上面两条说的扫描或生命周期发现问题，而不是安装失败。

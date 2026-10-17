@@ -150,7 +150,7 @@ POST /user/api/key   { "permissionCodes": ["api:echo:v1:ping", "api:echo:v1:vers
 curl -u "<accessKey>:<secretKey>" http://<gateway>/api/echo/v2/ping
 ```
 
-**升级**：在 `build.gradle.kts` 里调大 `apiPlugin.versionCode` 后重新构建上传即可。更多操作见 [GUIDE_zh.md](GUIDE_zh.md) §7-§8。
+**升级**：在 `build.gradle.kts` 里调大 `apiPlugin.versionCode` 后重新构建上传即可。调试循环则不必：重传当前已安装的版本会原地替换，只有**更低**的版本会被拒绝。更多操作见 [GUIDE_zh.md](GUIDE_zh.md) §7-§8；想在调试器里单步插件代码，见网关仓库的 [docs/plugin-debugging_zh.md](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-debugging_zh.md)。
 
 # 一键创建你自己的插件
 
@@ -175,7 +175,7 @@ version = "1.0.0"
 apiPlugin {
     pluginId = "geo"              // 唯一 ID，≤64 字符；插件的唯一身份来源
     pluginName = "Geo 插件"
-    versionCode = 1               // 必填；驱动网关升级判定，发版须递增
+    versionCode = 1               // 必填；更高为升级，相同则原地重新部署
     description = "把地理编码开放成 API"   // 可选
     author = "你的名字"                    // 可选
     mainClass = "com.example.geo.GeoLifecycle"  // 有生命周期时可选

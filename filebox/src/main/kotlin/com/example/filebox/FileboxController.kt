@@ -1,22 +1,12 @@
 package com.example.filebox
 
 import io.swagger.v3.oas.annotations.Operation
-import org.springframework.http.ContentDisposition
-import org.springframework.http.HttpHeaders
-import org.springframework.http.MediaType
-import org.springframework.http.MediaTypeFactory
-import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.DeleteMapping
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.PathVariable
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestParam
-import org.springframework.web.bind.annotation.RequestPart
+import org.springframework.http.*
+import org.springframework.web.bind.annotation.*
 import org.springframework.web.multipart.MultipartFile
 import top.fatweb.apimanagement.sdk.annotation.ApiController
 import top.fatweb.apimanagement.sdk.plugin.ApiResponse
 import top.fatweb.apimanagement.sdk.plugin.PluginContext
-import java.nio.charset.StandardCharsets
 
 /**
  * Filebox controller
@@ -101,7 +91,7 @@ class FileboxController(
             .contentType(MediaTypeFactory.getMediaType(file.name).orElse(MediaType.APPLICATION_OCTET_STREAM))
             .header(
                 HttpHeaders.CONTENT_DISPOSITION,
-                ContentDisposition.attachment().filename(file.name, StandardCharsets.UTF_8).build().toString()
+                ContentDisposition.attachment().filename(file.name, Charsets.UTF_8).build().toString()
             )
             .contentLength(bytes.size.toLong())
             .body(bytes)
