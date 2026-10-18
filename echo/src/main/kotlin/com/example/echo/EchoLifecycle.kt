@@ -12,8 +12,6 @@ import top.fatweb.apimanagement.sdk.plugin.PluginLifecycle
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see PluginLifecycle
- * @see PluginContext
  */
 @Component
 class EchoLifecycle : PluginLifecycle {

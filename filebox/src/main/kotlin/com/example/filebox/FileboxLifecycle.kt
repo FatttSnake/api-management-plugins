@@ -14,7 +14,6 @@ import top.fatweb.apimanagement.sdk.plugin.PluginLifecycle
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see PluginLifecycle
  */
 @Component
 class FileboxLifecycle : PluginLifecycle {
@@ -46,9 +45,9 @@ class FileboxLifecycle : PluginLifecycle {
     /**
      * Drop what this plugin created, for an uninstall that asked for its data to be deleted
      *
-     * `onUninstall` cannot: by then the datasources are closed with the rest of the mount.
-     * This runs while they are still open, and it is also the only moment the plugin can
-     * give back the content-addressed objects its snapshots reference.
+     * `onUninstall` cannot: its datasources are already closed. This runs while they are
+     * still open, and is the only moment the plugin can release the content-addressed
+     * objects its snapshots reference.
      */
     override fun onPurge(context: PluginContext) {
         context.datasources[CACHE]?.let { cache ->

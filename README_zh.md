@@ -15,7 +15,7 @@
 
 本仓库是插件的**开发工作区**：**根目录下每个子目录是一个相互独立的 Gradle 插件工程**，各自的打包与签名完全独立。仓库内置 `echo/` —— 一个可直接运行的完整示例插件。
 
-**写一个新插件的配置如今只有一个 `build.gradle.kts`（约 10 行）+ 你的 Kotlin 源码**：SDK 依赖、运行时依赖打包、密钥生成、`api-plugin.json` 描述符、公钥嵌入与 Ed25519 签名，全部由 Gradle 插件 `top.fatweb.api-plugin` 在 `build` 期自动完成。第三方库会以嵌套 jar 自动打包——不需要 Shadow 或 fat jar；网关已提供的库会被过滤掉并在运行时从网关解析。
+**写一个新插件只需一个 `build.gradle.kts`（约 10 行）+ 你的 Kotlin 源码**：SDK 依赖、运行时依赖打包、密钥生成、`api-plugin.json` 描述符、公钥嵌入与 Ed25519 签名，全部由 Gradle 插件 `top.fatweb.api-plugin` 在 `build` 期自动完成。第三方库会以嵌套 jar 自动打包——不需要 Shadow 或 fat jar；网关已提供的库会被过滤掉并在运行时从网关解析。
 
 # 仓库结构
 

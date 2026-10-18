@@ -17,8 +17,6 @@ import top.fatweb.apimanagement.sdk.plugin.PluginContext
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see PluginContext
- * @see FileboxService
  */
 @ApiController(version = 1)
 class FileboxController(
@@ -33,7 +31,6 @@ class FileboxController(
      * @return Response object includes the stored file
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(
         summary = "上传文件",
@@ -57,7 +54,6 @@ class FileboxController(
      * @return Response object includes the files
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(summary = "文件列表", description = "查询插件独立数据源中当前调用者的文件", operationId = "list")
     @GetMapping("/files")
@@ -77,8 +73,6 @@ class FileboxController(
      * @return File content
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ResponseEntity
-     * @see ByteArray
      */
     @Operation(summary = "下载文件", description = "读回原样字节（位置寻址的对象不做压缩）", operationId = "download")
     @GetMapping("/files/{id}", produces = [MediaType.APPLICATION_OCTET_STREAM_VALUE])
@@ -105,7 +99,6 @@ class FileboxController(
      * @return Response object includes the link
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(summary = "生成外链", description = "免登访问链接，未传有效期时使用配置项默认值", operationId = "link")
     @GetMapping("/files/{id}/link")
@@ -133,7 +126,6 @@ class FileboxController(
      * @return Response object
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(summary = "删除文件", description = "删除元数据与原样字节，已发出的外链随之失效", operationId = "remove")
     @DeleteMapping("/files/{id}")
@@ -151,7 +143,6 @@ class FileboxController(
      * @return Response object includes the content key
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(
         summary = "保存文本快照",
@@ -173,7 +164,6 @@ class FileboxController(
      * @return Response object includes the text
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(summary = "读取文本快照", description = "按内容 SHA-256 读回文本", operationId = "readSnapshot")
     @GetMapping("/snapshots/{contentKey}")

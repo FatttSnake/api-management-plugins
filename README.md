@@ -15,7 +15,7 @@ Every "available API" on the [API Management](https://github.com/FatttSnake/api-
 
 This repository is the **development workspace** for plugins: **every subdirectory under the root is an independent Gradle plugin project** with its own packaging and signing. It bundles `echo/` — a complete, runnable example plugin.
 
-**Building a new plugin is now a single `build.gradle.kts` (~10 lines) + your Kotlin sources**: the SDK dependency, runtime dependency bundling, key generation, the `api-plugin.json` descriptor, public-key embedding and the Ed25519 signature are all handled by the Gradle plugin `top.fatweb.api-plugin` at `build` time. Third-party libraries are packaged as nested jars automatically — no Shadow or fat-jar setup — while the libraries the gateway provides are filtered out and resolved from the gateway.
+**Building a new plugin is a single `build.gradle.kts` (~10 lines) + your Kotlin sources**: the SDK dependency, runtime dependency bundling, key generation, the `api-plugin.json` descriptor, public-key embedding and the Ed25519 signature are all handled by the Gradle plugin `top.fatweb.api-plugin` at `build` time. Third-party libraries are packaged as nested jars automatically — no Shadow or fat-jar setup — while the libraries the gateway provides are filtered out and resolved from the gateway.
 
 # Repository layout
 

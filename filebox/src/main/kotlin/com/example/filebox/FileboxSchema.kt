@@ -5,10 +5,9 @@ import javax.sql.DataSource
 /**
  * Filebox schema
  *
- * Creates the plugin's own tables, one per datasource it declares. The DDL runs on both
- * database types the gateway offers, so it stays portable if a datasource is re-pointed:
- * identifiers are plugin-generated, times are epoch milliseconds, and every statement is
- * `create table if not exists` with no index.
+ * Creates the plugin's own tables, one per datasource it declares. The DDL is portable
+ * across both offered dialects: plugin-generated identifiers, epoch-millisecond times and
+ * `create table if not exists` throughout.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0

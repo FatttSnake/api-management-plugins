@@ -2,7 +2,7 @@
 
 本指南面向**插件开发者**。API 以**插件 jar** 形式独立编写、打包、签名，上传到网关后**热插拔**（安装 / 禁用 / 升级 / 卸载），重启后自动重挂载。仓库内的 `echo/` 是一个可直接运行的完整示例，随文档对照阅读效果最佳。
 
-**写一个插件现在只需一个 `build.gradle.kts`（约 10 行）+ 你的 Kotlin 源码**：签名、密钥、描述符、文档所需资源都由 Gradle 插件 `top.fatweb.api-plugin` 自动完成。
+**写一个插件只需一个 `build.gradle.kts`（约 10 行）+ 你的 Kotlin 源码**：签名、密钥、描述符、文档所需资源都由 Gradle 插件 `top.fatweb.api-plugin` 自动完成。
 
 - SDK 构件：`top.fatweb:api-management-plugin-sdk`（由 Gradle 插件自动加入）
 - Gradle 插件：`top.fatweb.api-plugin`（本指南推荐）
@@ -21,7 +21,7 @@ Gradle 插件与 SDK 从**网关仓库**一起构建发布。首次使用前先�
 
 之后你新建的插件工程会在 `settings.gradle.kts` 的 `pluginManagement` 里加 `mavenLocal()` 来解析它们。已发布到私有 Nexus 时同理，把对应仓库地址加进去即可（也可用 `-PapiPlugin.sdkVersion=<版本>` 覆盖 SDK 版本）。
 
-拉到更新的网关仓库之后要重新执行一次：插件工程跑的这些任务都来自这个 Gradle 插件，所以只有自那次重新发布之后，插件工程里才会出现 `deployPlugin`（§2.4）。
+拉到更新的网关仓库之后要重新执行一次，以保证 Gradle 插件及其提供的任务是最新的。
 
 ---
 
@@ -112,7 +112,7 @@ apiPlugin {
 | `sdkVersion` | | 插件自带 SDK 版本 | （不写描述符，只控制依赖版本） |
 | `archiveName` | | `<pluginId>-<versionName>.jar` | （jar 文件名） |
 
-> 该插件会自动：给工程加 `repositories`（mavenCentral + mavenLocal）与 SDK 的 `implementation` 依赖；**每次构建**从上面的 DSL 生成 `META-INF/api-plugin.json` 与 `META-INF/plugin.pub.pem`（build 目录内）；生成 `keys/`；按 `<pluginId>-<versionName>.jar` 命名并签名。所以仓库里**不再需要**手写 `api-plugin.json` / `plugin.pub.pem`。
+> 该插件会自动：给工程加 `repositories`（mavenCentral + mavenLocal）与 SDK 的 `implementation` 依赖；**每次构建**从上面的 DSL 生成 `META-INF/api-plugin.json` 与 `META-INF/plugin.pub.pem`（build 目录内）；生成 `keys/`；按 `<pluginId>-<versionName>.jar` 命名并签名。所以仓库里**不需要**手写 `api-plugin.json` / `plugin.pub.pem`。
 
 ### 2.3 `.gitignore`
 
@@ -266,7 +266,7 @@ fun geocode(@RequestParam("address") address: String): ApiResponse<GeocodeRespon
     ApiResponse.ok(geocodeService.geocode(address))
 ```
 
-生成的片段里 `data` 就是 `GeocodeResponse` 的 schema（含字段描述、类型、可空）。**注意别改变线上 JSON**：DTO 的字段名与可达性要和原来的 `Map` 键一致。
+生成的片段里 `data` 就是 `GeocodeResponse` 的 schema（含字段描述、类型、可空）。**注意线上 JSON 的形状**：DTO 的字段名与可空性一旦确定就是对外契约，要慎重选择。
 
 ### 5.2 参数、请求体、描述
 
@@ -597,7 +597,7 @@ GET /api/echo/v2/whoami   # v2 专属
 - **`verifyPlugin` 失败**：jar 内公钥与签名私钥不配对（例如误删了其中一个文件）——删除整个 `keys/` 重新 `build`。
 - **设置写入报唯一键冲突**：设置存在 `t_b_api_plugin_setting`，其唯一键是 `(plugin_id, setting_key)`——每个插件每个 key 一行，没有软删除列。网关侧不存在需要修复的唯一键冲突：`saveSetting` 是先读后写；而 `purgeData=false` 时设置会跨重装保留，所以真正要找的是"某个插件既把 key 写进自己的运行态、又在配置 schema 里声明了同一个 key"这种情况（声明过的 key 归管理员，`saveSetting` 会直接拒绝）。
 - **升级后接口消失**：新 jar 里必须仍含全部需要保留的 `@ApiController`；卸载旧版后只保留新 jar 声明的接口。
-- **插件装上了，但生命周期钩子一个都不跑 / 自己的 `@Service` 注入不进来**：该组件落在子容器扫描范围之外（§6.1）——挂载时会打一条点名该组件的 WARN，找到它并把组件移到与 `@ApiController` 同一棵包树下。`mainClass` 写了一个不是 bean 的类名、或有多个 `PluginLifecycle` bean 却没写 `mainClass`，现在都会**导致安装失败**（§6.4），而不是静默挑一个。
+- **插件装上了，但生命周期钩子一个都不跑 / 自己的 `@Service` 注入不进来**：该组件落在子容器扫描范围之外（§6.1）——挂载时会打一条点名该组件的 WARN，找到它并把组件移到与 `@ApiController` 同一棵包树下。`mainClass` 写了一个不是 bean 的类名、或有多个 `PluginLifecycle` bean 却没写 `mainClass`，都会**导致安装失败**（§6.4），而不是静默挑一个。
 - **端点 404**：检查 URL 里的版本是否**大于等于**控制器声明的 `version`，以及控制器是否声明了 `version = 0`（安装会直接拒绝，因为谁也调不到）。方法级 `@RequestMapping` 不会是原因——它会在安装期被拒绝（§6.1）。有一种"404"其实不是 404：请求**已被管理员禁用**的插件的接口，返回的是 `Api disabled`，网关会区分这两种情况。
 - **插件被禁用了却还在干活**：检查它在路由之外做了什么。禁用会把 runtime 拆掉并让它保持不运行（下次启动也不加载），但拆的是**runtime**——如果插件的工作是由外部发起的（它在别处注册过 webhook、或某个服务会来轮询它），那部分不是网关能停掉的。
 - **`@Scheduled` 不触发**：插件的子容器没有自动配置、也不开启调度（§6.1）——确实需要就在自己的配置里打开。

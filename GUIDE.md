@@ -2,7 +2,7 @@
 
 This guide is for **plugin developers**. An API is authored, packaged and signed independently as a **plugin jar**, uploaded to the gateway and **hot-plugged** (install / disable / upgrade / uninstall) with automatic re-mounting after restart. The `echo/` directory in this repository is a complete, runnable example — reading it side by side with this document works best.
 
-**Writing a plugin is now a single `build.gradle.kts` (~10 lines) + your Kotlin sources**: signing, keys, the descriptor and documentation resources are all handled by the Gradle plugin `top.fatweb.api-plugin`.
+**Writing a plugin is a single `build.gradle.kts` (~10 lines) + your Kotlin sources**: signing, keys, the descriptor and documentation resources are all handled by the Gradle plugin `top.fatweb.api-plugin`.
 
 - SDK artifact: `top.fatweb:api-management-plugin-sdk` (added automatically by the Gradle plugin)
 - Gradle plugin: `top.fatweb.api-plugin` (recommended by this guide)
@@ -21,7 +21,7 @@ The Gradle plugin and SDK are built and published together from the **gateway re
 
 A plugin project then resolves them by adding `mavenLocal()` under `pluginManagement` in its `settings.gradle.kts`. If you publish to a private Nexus instead, add that repository likewise (the SDK version can be overridden with `-PapiPlugin.sdkVersion=<version>`).
 
-Re-run it after pulling a newer gateway: the Gradle plugin carries the tasks a plugin project runs, so `deployPlugin` (§2.4) only exists in a project that re-published the plugin since it was added.
+Re-run it after pulling a newer gateway so the Gradle plugin and the tasks it contributes are current.
 
 ---
 
@@ -113,7 +113,7 @@ Defaults of the `apiPlugin` DSL and the descriptor field they map to:
 | `sdkVersion` | | SDK version bundled with the plugin | (dependency only, not in the descriptor) |
 | `archiveName` | | `<pluginId>-<versionName>.jar` | (jar file name) |
 
-> The plugin automatically adds repositories (`mavenCentral` + `mavenLocal`) and the SDK's `implementation` dependency; on **every build** it generates `META-INF/api-plugin.json` and `META-INF/plugin.pub.pem` from the DSL above (inside `build/`), generates `keys/`, names the jar `<pluginId>-<versionName>.jar` and signs it. So you **no longer hand-write** `api-plugin.json` / `plugin.pub.pem` in the repo.
+> The plugin automatically adds repositories (`mavenCentral` + `mavenLocal`) and the SDK's `implementation` dependency; on **every build** it generates `META-INF/api-plugin.json` and `META-INF/plugin.pub.pem` from the DSL above (inside `build/`), generates `keys/`, names the jar `<pluginId>-<versionName>.jar` and signs it. You do not hand-write `api-plugin.json` / `plugin.pub.pem` in the repo.
 
 ### 2.3 `.gitignore`
 
@@ -267,7 +267,7 @@ fun geocode(@RequestParam("address") address: String): ApiResponse<GeocodeRespon
     ApiResponse.ok(geocodeService.geocode(address))
 ```
 
-The generated `data` is then the `GeocodeResponse` schema, with each field's type, description and nullability. **Watch the wire format**: the DTO's field names and reachability have to match the map keys they replace.
+The generated `data` is then the `GeocodeResponse` schema, with each field's type, description and nullability. **Watch the wire format**: a DTO fixes its field names and nullability, so choose them deliberately.
 
 ### 5.2 Parameters, body, descriptions
 
@@ -280,7 +280,7 @@ The generated `data` is then the `GeocodeResponse` schema, with each field's typ
 
 - The `paths` key is the full public path `/api/{plugin}/v{version}/...`, identical to the call URL;
 - The fragment is OpenAPI 3.1, so its Schema Objects follow JSON Schema 2020-12: nullability is a type union (`"type": ["integer", "null"]`), examples are a `examples: [value]` array, and binary payloads use `contentMediaType`;
-- A `ApiResponse<T>` return is inlined (`code`/`success`/`msg`/`data`) with `data` being `T`'s schema; `ResponseEntity<ByteArray>` becomes `application/octet-stream`; `Unit`/`void` yields a 200 response with no `content`;
+- An `ApiResponse<T>` return is inlined (`code`/`success`/`msg`/`data`) with `data` being `T`'s schema; `ResponseEntity<ByteArray>` becomes `application/octet-stream`; `Unit`/`void` yields a 200 response with no `content`;
 - One fragment covers all of a plugin's endpoints, across every `@ApiController` version (v1/v2 included);
 - **A generation failure does not block install**: the docs endpoint still returns the API list, the plugin just lacks parameter/structure details, and the gateway logs a WARN.
 
@@ -602,7 +602,7 @@ Expected response example (`/api/echo/v2/ping`):
 - **`verifyPlugin` fails**: the public key in the jar does not pair with the signing private key (e.g. one of the files was deleted) — delete the whole `keys/` and rebuild.
 - **Unique-key conflict while writing settings**: the settings live in `t_b_api_plugin_setting`, whose unique key is `(plugin_id, setting_key)` - one row per plugin and key, with no soft-delete column. There is no unique-key conflict to fix on the gateway side: `saveSetting` reads before it writes, and since settings survive a reinstall when `purgeData=false`, a plugin that writes its own runtime keys while also having them declared in its config schema is the thing to look for (a declared key is administrator-owned and is refused by `saveSetting`).
 - **APIs disappear after an upgrade**: the new jar must still contain every `@ApiController` you want to keep; after the old version is uninstalled only the APIs declared by the new jar remain.
-- **The plugin installed, but no lifecycle hook runs / my own `@Service` is not injected**: the component sits outside the packages the child container scans (§6.1) — the mount logs a WARN naming it, so look for that, and move it into the same package tree as your `@ApiController`. A `mainClass` naming a class that is not a bean, or several `PluginLifecycle` beans with no `mainClass`, now **fails the install** (§6.4) rather than quietly picking one.
+- **The plugin installed, but no lifecycle hook runs / my own `@Service` is not injected**: the component sits outside the packages the child container scans (§6.1) — the mount logs a WARN naming it, so look for that, and move it into the same package tree as your `@ApiController`. A `mainClass` naming a class that is not a bean, or several `PluginLifecycle` beans with no `mainClass`, **fails the install** (§6.4) rather than quietly picking one.
 - **An endpoint 404s**: check that the version in the URL is **at least** the controller's declared `version`, and that the controller does not declare `version = 0` (the install refuses that, since nothing could reach it). A method-level `@RequestMapping` cannot be the cause — it is refused at install (§6.1). One 404 that is not one: a request to an API of a plugin the administrator has **switched off** answers `Api disabled`, not a missing-resource error, because the gateway tells the two apart.
 - **A disabled plugin is still doing something**: check what it does outside its routes. Switching a plugin off takes its runtime down and keeps it down — it is not loaded at the next start either — but this happens to the *runtime*, so a plugin whose work is driven by an outside party (a webhook it registered elsewhere, a service that polls it) is not something the gateway can stop.
 - **A `@Scheduled` method never fires**: the plugin's child container is not auto-configured and enables no scheduling (§6.1) — turn it on in your own configuration if you need it.

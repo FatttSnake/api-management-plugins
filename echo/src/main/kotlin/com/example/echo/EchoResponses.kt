@@ -5,12 +5,11 @@ import io.swagger.v3.oas.annotations.media.Schema
 /**
  * Echo response (v1)
  *
- * The payload of `/api/echo/v1/ping`. A declared type rather than a map, because the
- * documentation fragment is generated from these classes.
+ * The payload of `/api/echo/v1/ping`. Declared as a DTO so the generated documentation
+ * carries its schema.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  */
 data class PingResponse(
     /**
@@ -31,7 +30,6 @@ data class PingResponse(
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  */
 data class VersionResponse(
     /**
@@ -54,7 +52,6 @@ data class VersionResponse(
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  */
 data class PingV2Response(
     /**
@@ -81,7 +78,6 @@ data class PingV2Response(
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  */
 data class WhoamiResponse(
     /**

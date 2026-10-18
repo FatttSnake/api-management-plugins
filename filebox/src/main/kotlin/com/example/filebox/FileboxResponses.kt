@@ -5,12 +5,11 @@ import io.swagger.v3.oas.annotations.media.Schema
 /**
  * File metadata response
  *
- * The payload of an upload, and the element type of the file list. A declared type rather
- * than a map, because the gateway generates the documentation fragment from these classes.
+ * The payload of an upload, and the element type of the file list. Declared as a DTO so the
+ * generated documentation carries its schema.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  * @see FileboxFile
  */
 data class FileResponse(
@@ -65,7 +64,6 @@ fun FileboxFile.toResponse(): FileResponse = FileResponse(
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  */
 data class LinkResponse(
     /**
@@ -101,7 +99,6 @@ data class LinkResponse(
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  */
 data class RemoveResponse(
     /**
@@ -122,7 +119,6 @@ data class RemoveResponse(
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  * @see SnapshotResult
  */
 data class SnapshotResponse(
@@ -166,7 +162,6 @@ fun SnapshotResult.toResponse(): SnapshotResponse = SnapshotResponse(
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see Schema
  */
 data class ReadSnapshotResponse(
     /**
