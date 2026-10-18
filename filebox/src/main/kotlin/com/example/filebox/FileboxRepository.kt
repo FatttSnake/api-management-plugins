@@ -219,8 +219,8 @@ class FileboxRepository(private val dataSource: DataSource) {
     /**
      * Every content key this plugin's snapshots reference
      *
-     * Read on purge, to give back the content-addressed objects it stored: they are shared
-     * between writers and belong to no plugin, so only the plugin can say which are its own.
+     * Read on purge so the plugin can release the content-addressed objects it stored: they
+     * are shared between writers, so only the plugin can say which are its own.
      *
      * @return Content keys, in no particular order
      * @author FatttSnake, fatttsnake@gmail.com

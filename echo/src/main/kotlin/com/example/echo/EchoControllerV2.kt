@@ -13,8 +13,6 @@ import top.fatweb.apimanagement.sdk.plugin.PluginContext
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see ApiController
- * @see PluginContext
  */
 @ApiController(version = 2)
 class EchoControllerV2(
@@ -26,7 +24,6 @@ class EchoControllerV2(
      * @return Response object includes the echo message, the version and the caller
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(summary = "回声", description = "返回 v2 回声消息、版本信息与当前调用者", operationId = "ping")
     @GetMapping("/ping")
@@ -45,7 +42,6 @@ class EchoControllerV2(
      * @return Response object includes the current user / access key
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
-     * @see ApiResponse
      */
     @Operation(summary = "当前调用者", description = "返回当前用户与访问密钥标识", operationId = "whoami")
     @GetMapping("/whoami")

@@ -15,7 +15,7 @@ Every "available API" on the [API Management](https://github.com/FatttSnake/api-
 
 This repository is the **development workspace** for plugins: **every subdirectory under the root is an independent Gradle plugin project** with its own packaging and signing. It bundles `echo/` — a complete, runnable example plugin.
 
-**Building a new plugin is now a single `build.gradle.kts` (~10 lines) + your Kotlin sources**: the SDK dependency, key generation, the `api-plugin.json` descriptor, public-key embedding and the Ed25519 signature are all handled by the Gradle plugin `top.fatweb.api-plugin` at `build` time.
+**Building a new plugin is a single `build.gradle.kts` (~10 lines) + your Kotlin sources**: the SDK dependency, runtime dependency bundling, key generation, the `api-plugin.json` descriptor, public-key embedding and the Ed25519 signature are all handled by the Gradle plugin `top.fatweb.api-plugin` at `build` time. Third-party libraries are packaged as nested jars automatically — no Shadow or fat-jar setup — while the libraries the gateway provides are filtered out and resolved from the gateway.
 
 # Repository layout
 
@@ -151,7 +151,7 @@ POST /user/api/key   { "permissionCodes": ["api:echo:v1:ping", "api:echo:v1:vers
 curl -u "<accessKey>:<secretKey>" http://<gateway>/api/echo/v2/ping
 ```
 
-**Upgrade**: bump `apiPlugin.versionCode` in `build.gradle.kts`, rebuild and re-upload. For **uninstall / disable / restart recovery** and more, see [GUIDE.md](GUIDE.md) §7-§8.
+**Upgrade**: raise `apiPlugin.versionCode` in `build.gradle.kts`, rebuild and re-upload. An edit-and-redeploy loop does not have to: re-uploading the version that is already installed replaces it in place, and only a **lower** one is refused. For **uninstall / disable / restart recovery** and more, see [GUIDE.md](GUIDE.md) §7-§8; for stepping through a plugin in a debugger, see the gateway's [docs/plugin-debugging.md](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-debugging.md).
 
 # Create your own plugin in one go
 
@@ -176,7 +176,7 @@ version = "1.0.0"
 apiPlugin {
     pluginId = "geo"              // unique ID, ≤64 chars; the plugin's whole identity
     pluginName = "Geo Plugin"
-    versionCode = 1               // required; drives the gateway upgrade check, bump per release
+    versionCode = 1               // required; higher is an upgrade, the same one re-deploys in place
     description = "Expose geocoding as an API"   // optional
     author = "Your name"                          // optional
     mainClass = "com.example.geo.GeoLifecycle"    // only when you have a lifecycle

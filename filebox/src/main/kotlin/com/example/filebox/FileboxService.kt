@@ -10,16 +10,13 @@ import javax.sql.DataSource
 /**
  * Filebox service
  *
- * Everything here goes through the two channels a plugin may use: its own isolated
- * datasources for metadata, and [PluginContext.storage] for bytes. No file is written
- * outside the plugin's storage namespace, which the SDK composes from the plugin ID.
- *
- * File rows live in the MySQL datasource an administrator configures, snapshots in the
- * SQLite one the gateway derives.
+ * Metadata goes through the plugin's isolated datasources and bytes through
+ * [PluginContext.storage], whose namespace the SDK composes from the plugin ID. File rows
+ * live in the administrator-configured MySQL datasource, snapshots in the SQLite one the
+ * gateway derives.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
- * @see PluginContext
  */
 @Service
 class FileboxService(private val pluginContext: PluginContext) {
@@ -315,8 +312,8 @@ class FileboxService(private val pluginContext: PluginContext) {
      * Resolve one of the plugin's datasources
      *
      * `main` is absent from `context.datasources` until the administrator fills it in;
-     * `cache`, a SQLite one the gateway derives, is always there. Reporting the missing one
-     * from the endpoint beats refusing to mount.
+     * `cache`, a SQLite one the gateway derives, is always there. The endpoint reports the
+     * missing one instead of refusing to mount.
      *
      * @param name Datasource name
      * @throws FileboxException when the gateway supplied no such datasource
