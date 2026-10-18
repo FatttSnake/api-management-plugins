@@ -383,13 +383,21 @@ class GeoLifecycle : PluginLifecycle {
 
 **`onPurge` 是唯一一个「失败会拒绝该次卸载」的钩子。** 插件自己拥有的表（包括网关从不触碰的 MySQL 库里的表）就是在它里面删的，它运行时插件的数据源、storage 与设置都还可用。被管理员禁用的插件会为此**被临时挂起来跑最后一次**（刻意不跑它的 `onStart`），因为一个没在运行的插件同样得有能力删掉自己的数据。它一旦抛异常，网关会回给管理员 `40068`、把原因记进插件行的 `loadError`，并且**什么都不删**——行、配置、文件全都还在，修好原因后再执行一次卸载即可。
 
-### 6.5 自带依赖
+### 6.5 打包依赖
 
-插件可**打包自己的第三方库**（子优先 ClassLoader 隔离）。仅下列前缀委托给网关父加载器（保证注解/序列化类身份一致）：`java.* javax.* jakarta.* sun.* jdk.* org.springframework.* org.slf4j.* tools.jackson.* com.fasterxml.* io.swagger.* org.springdoc.* com.baomidou.* com.zaxxer.hikari.* com.mysql.cj.jdbc.* org.sqlite.* kotlin.* kotlinx.* top.fatweb.apimanagement.*`。其余类名从插件 jar 优先加载。若需打包依赖，用 shadow/fat jar 将依赖类合并进插件 jar。
+第三方依赖会**自动打包**。Gradle 插件解析 `runtimeClasspath`，过滤掉网关已提供的库，其余依赖以原始 jar 字节放进 `META-INF/api-plugin-libs/<sha256>.jar`，并生成描述它们的 `index.json`。**不需要**自己配 Shadow 或 fat jar；插件 jar 的大小上限是网关的 `app.storage.plugin-jar-max-bytes`（默认 200 MB）。
 
-这些前缀**只从父加载器解析，不再回退到 jar**：把依赖类放进上述命名空间（例如把插件自己的代码放进 `top.fatweb.apimanagement.*`，或把网关已有的连接池/驱动类也打进 jar）不会生效——插件无法遮蔽网关已有的同名类，加载失败会直接暴露而不是悄悄换一份。需要打包的库请使用上述清单之外的包名。
+网关已提供的库不会被打包：SDK、Spring、Springdoc/Swagger、SLF4J/Logback、Jackson（2 与 3）、Micrometer、commons-logging、JSpecify、Kotlin/Kotlinx、Jakarta API、Tomcat、MyBatis-Plus、HikariCP、MySQL/SQLite/Flyway 与 BouncyCastle，运行时从网关解析。要保留瘦包可设 `apiPlugin { bundleDependencies = false }`；只需要编译、不希望打包的依赖用 `compileOnly`。
 
-> SDK 声明 `spring-web` / `spring-context` / `swagger-annotations` / `slf4j-api` / Jackson 3（`jackson-module-kotlin`）：直接用 `LoggerFactory` 写日志、用 `jacksonObjectMapper()` 做序列化即可。`org.slf4j.` 与 `tools.jackson.` 都是向上委派的，运行期你的日志调用落在网关的绑定上、你的 mapper 就是网关的 Jackson——**不要打包 `slf4j-api`、日志后端或 Jackson**，打进去的那份根本不会被加载。其余自己持有的资源记得在 `onStop` 里释放。
+网关会把嵌套 jar 解压到内容寻址缓存，并按依赖的 SHA-256 与直接依赖集合在插件间共享同一个类加载器——同一个库无论被多少插件使用都只定义一次。每个库保留自己的 `META-INF/services` 与 multi-release 布局，依赖类不会被合并进你的 jar。
+
+仅下列类名前缀委托给网关父加载器（保证注解/序列化类身份一致）：`java.* javax.* jakarta.* sun.* jdk.* org.springframework.* org.apache.commons.logging.* io.micrometer.* org.jspecify.* org.slf4j.* tools.jackson.* com.fasterxml.* io.swagger.* org.springdoc.* com.baomidou.* com.zaxxer.hikari.* com.mysql.cj.jdbc.* org.sqlite.* kotlin.* kotlinx.* top.fatweb.apimanagement.*`。其余类名优先从你打包的库加载。
+
+这些前缀**只从父加载器解析，不再回退到 jar**：这些命名空间下的类永远来自网关，打包一份替换品不会生效。插件自己的代码不要放在 `top.fatweb.apimanagement.*` 下，也不要试图遮蔽网关已有的连接池/驱动类。
+
+BouncyCastle 默认由网关提供（1.86，`bcprov` + `bcpkix` + `bcutil`）。需要其他版本的插件可设 `apiPlugin { bundleBouncyCastle = true }`，它会打包完整 BC 闭包。由于 `Security` provider 是 JVM 全局注册的，自带 BC 时必须把 `Provider` 实例传给 `JcaContentSignerBuilder.setProvider(...)`、`JcaX509CertificateConverter.setProvider(...)` 等 API——**不要调用 `Security.addProvider`**：全局注册会在 reload 后钉住该插件的共享类加载器，并可能与网关的 `"BC"` provider 冲突。
+
+> SDK 声明 `spring-web` / `spring-context` / `swagger-annotations` / `slf4j-api` / Jackson 3（`jackson-module-kotlin`）：直接用 `LoggerFactory` 写日志、用 `jacksonObjectMapper()` 做序列化即可。`org.slf4j.` 与 `tools.jackson.` 都是向上委派的，运行期你的日志调用落在网关的绑定上、你的 mapper 就是网关的 Jackson——构建时已经会把它们过滤掉。其余自己持有的资源记得在 `onStop` 里释放。
 
 ### 6.6 插件配置声明 `META-INF/plugin-config.json`
 
