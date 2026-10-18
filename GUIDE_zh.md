@@ -395,7 +395,7 @@ class GeoLifecycle : PluginLifecycle {
 
 这些前缀**只从父加载器解析，不再回退到 jar**：这些命名空间下的类永远来自网关，打包一份替换品不会生效。插件自己的代码不要放在 `top.fatweb.apimanagement.*` 下，也不要试图遮蔽网关已有的连接池/驱动类。
 
-BouncyCastle 默认由网关提供（1.86，`bcprov` + `bcpkix` + `bcutil`）。需要其他版本的插件可设 `apiPlugin { bundleBouncyCastle = true }`，它会打包完整 BC 闭包。由于 `Security` provider 是 JVM 全局注册的，自带 BC 时必须把 `Provider` 实例传给 `JcaContentSignerBuilder.setProvider(...)`、`JcaX509CertificateConverter.setProvider(...)` 等 API——**不要调用 `Security.addProvider`**：全局注册会在 reload 后钉住该插件的共享类加载器，并可能与网关的 `"BC"` provider 冲突。
+BouncyCastle 默认由网关提供（1.86，`bcprov` + `bcpkix` + `bcutil`）。网关提供的是运行期类路径，编译期仍需自行声明：`compileOnly("org.bouncycastle:bcpkix-jdk18on:1.86")`（`bcprov`、`bcutil` 随其传递引入；BC 不会被放进插件包）。需要其他版本的插件可设 `apiPlugin { bundleBouncyCastle = true }`，它会打包完整 BC 闭包。由于 `Security` provider 是 JVM 全局注册的，自带 BC 时必须把 `Provider` 实例传给 `JcaContentSignerBuilder.setProvider(...)`、`JcaX509CertificateConverter.setProvider(...)` 等 API——**不要调用 `Security.addProvider`**：全局注册会在 reload 后钉住该插件的共享类加载器，并可能与网关的 `"BC"` provider 冲突。
 
 > SDK 声明 `spring-web` / `spring-context` / `swagger-annotations` / `slf4j-api` / Jackson 3（`jackson-module-kotlin`）：直接用 `LoggerFactory` 写日志、用 `jacksonObjectMapper()` 做序列化即可。`org.slf4j.` 与 `tools.jackson.` 都是向上委派的，运行期你的日志调用落在网关的绑定上、你的 mapper 就是网关的 Jackson——构建时已经会把它们过滤掉。其余自己持有的资源记得在 `onStop` 里释放。
 
