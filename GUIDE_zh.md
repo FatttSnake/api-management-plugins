@@ -316,8 +316,8 @@ class GeoController(
 - 每个端点方法标注 HTTP 映射注解；只有 `@GetMapping` / `@PostMapping` / `@PutMapping` / `@PatchMapping` / `@DeleteMapping` 会被解析。方法级 `@RequestMapping` **不在其列**——**安装会被拒绝**并点名该方法，而不是静默跳过、让调用方拿到 404。每个被映射的方法都必须有 `operationId`（缺失即拒绝），它决定 API 作用域码：`api:{plugin}:v{version}:{operationId}`。
 - `version` 必须**至少为 1**：声明 `version = 0` 或负数的控制器会拼出路由器永远匹配不到的路径，因此安装会直接拒绝，而不是写出一条谁也调不到的接口。
 - 同一插件内，两个端点不得占用相同的路径与 HTTP 方法——会在安装期被拒绝并点名两个方法，而不是留到之后变成 ambiguous mapping 报错。**不同**版本下路径相同是允许的：版本本身就在路径里。
-- `@ApiController(path = [...])` 在版本段之后追加一段基础路径：`/api/{plugin}/v{version}/<path[0]>/<方法路径>`。写成数组只是为了对齐 `@RequestMapping` 的形状，**实际只支持一个元素**——声明多个会在安装期被拒绝，而不是丢掉其余几个。
-- 方法级映射同理，一个方法只支持一个路径：`@GetMapping("/a", "/b")` 会在安装期被拒绝并点名该方法，而不是只挂 `/a`。需要多个路径就各自声明一个方法，或映射一个公共前缀。`value` 与 `path` 互为别名，用任意一个写路径即可——两个都写且内容不同会被拒绝，而不是替你挑一个。
+- `@ApiController(path = "...")` 在版本段之后追加一段基础路径：`/api/{plugin}/v{version}/<path>/<方法路径>`。`path` 首尾的 `/` 会被忽略。
+- 方法级映射同样只接受一个路径：`@GetMapping("/a", "/b")` 会在安装期被拒绝并点名该方法，而不是只挂 `/a`。需要多个路径就各自声明一个方法，或映射一个公共前缀。`value` 与 `path` 互为别名，用任意一个写路径即可——两个都写且内容不同会被拒绝，而不是替你挑一个。
 - `params` / `headers` / `produces` / `consumes` 都按声明的语义作为路由条件生效，所以「要求某个参数/请求头」的方法行为与 Spring 应用里一致。
 - 一个插件内可有**多个 `@ApiController(version=n)`** 共存实现向前兼容。`echo/` 即如此：`EchoController`（v1，含 `ping`/`version`）与 `EchoControllerV2`（v2，含 `ping`/`whoami`）在**同一插件**里共存——请求 `v2` 及以上时 `ping` 由 v2 覆盖（滚动兼容），`v1` 专属的 `version` 仍由 v1 兜底。
 
