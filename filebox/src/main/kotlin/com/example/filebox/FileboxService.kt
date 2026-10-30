@@ -1,7 +1,7 @@
 package com.example.filebox
 
-import org.springframework.stereotype.Service
-import top.fatweb.apimanagement.sdk.plugin.PluginContext
+import top.fatweb.apimanagement.api.v1.ApiException
+import top.fatweb.apimanagement.api.v1.GatewayContext
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.UUID
@@ -11,15 +11,14 @@ import javax.sql.DataSource
  * Filebox service
  *
  * Metadata goes through the plugin's isolated datasources and bytes through
- * [PluginContext.storage], whose namespace the SDK composes from the plugin ID. File rows
+ * [GatewayContext.storage], whose namespace the gateway composes from the plugin ID. File rows
  * live in the administrator-configured MySQL datasource, snapshots in the SQLite one the
  * gateway derives.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
  */
-@Service
-class FileboxService(private val pluginContext: PluginContext) {
+class FileboxService(private val context: GatewayContext) {
     private companion object {
         /**
          * Datasource holding the files themselves
@@ -70,7 +69,7 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @param fileName Original file name
      * @param bytes File content
      * @return Stored file metadata
-     * @throws FileboxException when the file is empty, too large, or the file datasource
+     * @throws ApiException when the file is empty, too large, or the file datasource
      *         has not been configured yet
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
@@ -79,11 +78,11 @@ class FileboxService(private val pluginContext: PluginContext) {
         val repository = repository()
 
         if (bytes.isEmpty()) {
-            throw FileboxException(FileboxCode.INVALID_ARGUMENT, "文件内容为空")
+            throw ApiException(FileboxCode.INVALID_ARGUMENT, "文件内容为空")
         }
         val limit = intConfig(MAX_FILE_SIZE_MB, 10) * MEGABYTE
         if (bytes.size > limit) {
-            throw FileboxException(
+            throw ApiException(
                 FileboxCode.FILE_TOO_LARGE,
                 "文件大小 ${bytes.size} 字节，超过配置项 $MAX_FILE_SIZE_MB 的上限 ${limit / MEGABYTE} MB"
             )
@@ -91,7 +90,7 @@ class FileboxService(private val pluginContext: PluginContext) {
 
         val id = UUID.randomUUID().toString()
         val path = "files/$ownerId/$id${extensionOf(fileName)}"
-        pluginContext.storage.saveFile(path, bytes)
+        context.storage().saveFile(path, bytes)
 
         val file = FileboxFile(
             id = id,
@@ -122,15 +121,15 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @param ownerId Owner ID
      * @param id File ID
      * @return File metadata
-     * @throws FileboxException when the file does not exist or belongs to somebody else
+     * @throws ApiException when the file does not exist or belongs to somebody else
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
     fun requireFile(ownerId: Long, id: String): FileboxFile {
         val file = repository().findFile(id)
-            ?: throw FileboxException(FileboxCode.FILE_NOT_FOUND, "文件不存在：$id")
+            ?: throw ApiException(FileboxCode.FILE_NOT_FOUND, "文件不存在：$id")
         if (file.ownerId != ownerId) {
-            throw FileboxException(FileboxCode.ACCESS_DENIED, "无权访问该文件")
+            throw ApiException(FileboxCode.ACCESS_DENIED, "无权访问该文件")
         }
 
         return file
@@ -145,14 +144,14 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @param ownerId Owner ID
      * @param id File ID
      * @return File metadata and content
-     * @throws FileboxException when the file or its content is gone
+     * @throws ApiException when the file or its content is gone
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
     fun download(ownerId: Long, id: String): Pair<FileboxFile, ByteArray> {
         val file = requireFile(ownerId, id)
-        val bytes = pluginContext.storage.loadFile(file.path)
-            ?: throw FileboxException(FileboxCode.FILE_NOT_FOUND, "文件内容已丢失：$id")
+        val bytes = context.storage().loadFile(file.path)
+            ?: throw ApiException(FileboxCode.FILE_NOT_FOUND, "文件内容已丢失：$id")
 
         return file to bytes
     }
@@ -167,7 +166,7 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @param id File ID
      * @param ttlHours Requested life in hours, or null for the configured default
      * @return External URL and the life it was minted with
-     * @throws FileboxException when the file is gone or the gateway cannot build a URL
+     * @throws ApiException when the file is gone or the gateway cannot build a URL
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
@@ -176,11 +175,11 @@ class FileboxService(private val pluginContext: PluginContext) {
         // The gateway answers with the declared default, so the administrator never has to set it
         val hours = ttlHours ?: intConfig(DEFAULT_LINK_TTL_HOURS, 1).toLong()
         if (hours <= 0) {
-            throw FileboxException(FileboxCode.INVALID_ARGUMENT, "外链有效期必须大于 0")
+            throw ApiException(FileboxCode.INVALID_ARGUMENT, "外链有效期必须大于 0")
         }
 
-        val url = pluginContext.storage.fileExternalUrl(file.path, Duration.ofHours(hours))
-            ?: throw FileboxException(
+        val url = context.storage().fileExternalUrl(file.path, Duration.ofHours(hours))
+            ?: throw ApiException(
                 FileboxCode.EXTERNAL_URL_UNAVAILABLE,
                 "网关无法生成外链，请配置 app.storage.public-base-url"
             )
@@ -193,7 +192,7 @@ class FileboxService(private val pluginContext: PluginContext) {
      *
      * @param ownerId Owner ID
      * @param id File ID
-     * @throws FileboxException when the file does not exist or belongs to somebody else
+     * @throws ApiException when the file does not exist or belongs to somebody else
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
@@ -201,7 +200,7 @@ class FileboxService(private val pluginContext: PluginContext) {
         val file = requireFile(ownerId, id)
 
         repository().deleteFile(id)
-        pluginContext.storage.deleteFile(file.path)
+        context.storage().deleteFile(file.path)
     }
 
     /**
@@ -214,24 +213,24 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @param ownerId Owner ID
      * @param text Text content
      * @return Stored snapshot information
-     * @throws FileboxException when snapshots are disabled
+     * @throws ApiException when snapshots are disabled
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
     fun snapshot(ownerId: Long, text: String): SnapshotResult {
         // Read per call, so a config change is visible on the very next invocation - no remount
         if (!booleanConfig(ALLOW_SNAPSHOT, true)) {
-            throw FileboxException(FileboxCode.SNAPSHOT_DISABLED, "文本快照功能未启用，可在插件配置中开启")
+            throw ApiException(FileboxCode.SNAPSHOT_DISABLED, "文本快照功能未启用，可在插件配置中开启")
         }
         if (text.isEmpty()) {
-            throw FileboxException(FileboxCode.INVALID_ARGUMENT, "文本内容为空")
+            throw ApiException(FileboxCode.INVALID_ARGUMENT, "文本内容为空")
         }
 
         val bytes = text.toByteArray(Charsets.UTF_8)
         val contentKey = sha256Hex(bytes)
         val repository = snapshotRepository()
-        val alreadyStored = pluginContext.storage.existsContent(contentKey)
-        pluginContext.storage.saveContent(bytes)
+        val alreadyStored = context.storage().existsContent(contentKey)
+        context.storage().saveContent(bytes)
 
         if (repository.findSnapshot(contentKey) == null) {
             repository.insertSnapshot(
@@ -253,19 +252,19 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @param ownerId Owner ID
      * @param contentKey Content key
      * @return Text content
-     * @throws FileboxException when the snapshot does not exist or belongs to somebody else
+     * @throws ApiException when the snapshot does not exist or belongs to somebody else
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
     fun readSnapshot(ownerId: Long, contentKey: String): String {
         val snapshot = snapshotRepository().findSnapshot(contentKey)
-            ?: throw FileboxException(FileboxCode.SNAPSHOT_NOT_FOUND, "快照不存在：$contentKey")
+            ?: throw ApiException(FileboxCode.SNAPSHOT_NOT_FOUND, "快照不存在：$contentKey")
         if (snapshot.ownerId != ownerId) {
-            throw FileboxException(FileboxCode.ACCESS_DENIED, "无权访问该快照")
+            throw ApiException(FileboxCode.ACCESS_DENIED, "无权访问该快照")
         }
 
-        val bytes = pluginContext.storage.loadContent(contentKey)
-            ?: throw FileboxException(FileboxCode.SNAPSHOT_NOT_FOUND, "快照内容已丢失：$contentKey")
+        val bytes = context.storage().loadContent(contentKey)
+            ?: throw ApiException(FileboxCode.SNAPSHOT_NOT_FOUND, "快照内容已丢失：$contentKey")
 
         return String(bytes, Charsets.UTF_8)
     }
@@ -277,15 +276,15 @@ class FileboxService(private val pluginContext: PluginContext) {
      * through the API, while the plugin reads it back as plaintext here.
      *
      * @param token Token presented by the caller
-     * @throws FileboxException when a token is configured and does not match
+     * @throws ApiException when a token is configured and does not match
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
     fun verifyUploadToken(token: String?) {
-        val expected = pluginContext.getSetting(UPLOAD_TOKEN)?.takeIf { it.isNotEmpty() } ?: return
+        val expected = context.settings().get(UPLOAD_TOKEN)?.takeIf { it.isNotEmpty() } ?: return
 
         if (token != expected) {
-            throw FileboxException(FileboxCode.UPLOAD_TOKEN_MISMATCH, "上传令牌不匹配")
+            throw ApiException(FileboxCode.UPLOAD_TOKEN_MISMATCH, "上传令牌不匹配")
         }
     }
 
@@ -296,7 +295,7 @@ class FileboxService(private val pluginContext: PluginContext) {
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
-    fun publicNotice(): String? = pluginContext.getSetting(PUBLIC_NOTICE)?.takeIf { it.isNotEmpty() }
+    fun publicNotice(): String? = context.settings().get(PUBLIC_NOTICE)?.takeIf { it.isNotEmpty() }
 
     /**
      * Open a repository over the datasource holding the files
@@ -316,12 +315,12 @@ class FileboxService(private val pluginContext: PluginContext) {
      * missing one instead of refusing to mount.
      *
      * @param name Datasource name
-     * @throws FileboxException when the gateway supplied no such datasource
+     * @throws ApiException when the gateway supplied no such datasource
      * @author FatttSnake, fatttsnake@gmail.com
      * @since 1.0.0
      */
-    private fun requireDataSource(name: String): DataSource = pluginContext.datasources[name]
-        ?: throw FileboxException(
+    private fun requireDataSource(name: String): DataSource = context.dataSources().get(name)
+        ?: throw ApiException(
             FileboxCode.DATASOURCE_NOT_CONFIGURED,
             "插件数据源 '$name' 不可用，请在插件配置中填写该数据源的连接信息"
         )
@@ -333,13 +332,13 @@ class FileboxService(private val pluginContext: PluginContext) {
      * reads as the schema default.
      */
     private fun intConfig(key: String, fallback: Int): Int =
-        pluginContext.getSetting(key)?.toIntOrNull() ?: fallback
+        context.settings().get(key)?.toIntOrNull() ?: fallback
 
     /**
      * Read a boolean setting
      */
     private fun booleanConfig(key: String, fallback: Boolean): Boolean =
-        pluginContext.getSetting(key)?.toBooleanStrictOrNull() ?: fallback
+        context.settings().get(key)?.toBooleanStrictOrNull() ?: fallback
 
     /**
      * Build a storage-safe extension from a user-supplied file name
