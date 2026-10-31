@@ -1,4 +1,8 @@
-package com.example.filebox
+package com.example.filebox.api
+
+import com.example.filebox.model.FileboxFile
+import com.example.filebox.model.FileboxPage
+import com.example.filebox.model.SnapshotResult
 
 /**
  * File metadata response.
@@ -32,6 +36,37 @@ fun FileboxFile.toResponse(): FileResponse = FileResponse(
     size = size,
     path = path,
     createTime = createTime
+)
+
+/**
+ * One page of files.
+ *
+ * @property records records of this page
+ * @property total number of files matching the query
+ * @property page current page number, starting at 1
+ * @property size page size
+ * @author FatttSnake, fatttsnake@gmail.com
+ * @since 1.0.0
+ */
+data class FilePageResponse(
+    val records: List<FileResponse>,
+    val total: Long,
+    val page: Long,
+    val size: Long
+)
+
+/**
+ * Builds the API representation of one page of files.
+ *
+ * @return page response
+ * @author FatttSnake, fatttsnake@gmail.com
+ * @since 1.0.0
+ */
+fun FileboxPage<FileboxFile>.toResponse(): FilePageResponse = FilePageResponse(
+    records = records.map(FileboxFile::toResponse),
+    total = total,
+    page = page,
+    size = size
 )
 
 /**

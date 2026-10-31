@@ -112,6 +112,7 @@ Defaults of the `apiPlugin` DSL and the descriptor field they map to:
 | `mainClass` | | none | `mainClass` (when absent the gateway uses the plugin's only `PluginLifecycle` bean; several beans and no `mainClass` fails the install) |
 | `sdkVersion` | | SDK version bundled with the plugin | (dependency only, not in the descriptor) |
 | `archiveName` | | `<pluginId>-<versionName>.jar` | (jar file name) |
+| `sharedLoader(vararg group:artifact)` | | none | (lock `groups`; no descriptor field) |
 
 > The plugin automatically adds repositories (`mavenCentral` + `mavenLocal`) and the SDK's `implementation` dependency; on **every build** it generates `META-INF/api-plugin.json` and `META-INF/plugin.pub.pem` from the DSL above (inside `build/`), generates `keys/`, names the jar `<pluginId>-<versionName>.jar` and signs it. You do not hand-write `api-plugin.json` / `plugin.pub.pem` in the repo.
 

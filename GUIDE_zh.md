@@ -111,6 +111,7 @@ apiPlugin {
 | `mainClass` | | 无 | `mainClass`（缺省时用插件唯一的 `PluginLifecycle` bean；有多个 bean 又没写 `mainClass` 会导致安装失败） |
 | `sdkVersion` | | 插件自带 SDK 版本 | （不写描述符，只控制依赖版本） |
 | `archiveName` | | `<pluginId>-<versionName>.jar` | （jar 文件名） |
+| `sharedLoader(vararg group:artifact)` | | 无 | （写 lock 的 `groups`，不写描述符） |
 
 > 该插件会自动：给工程加 `repositories`（mavenCentral + mavenLocal）与 SDK 的 `implementation` 依赖；**每次构建**从上面的 DSL 生成 `META-INF/api-plugin.json` 与 `META-INF/plugin.pub.pem`（build 目录内）；生成 `keys/`；按 `<pluginId>-<versionName>.jar` 命名并签名。所以仓库里**不需要**手写 `api-plugin.json` / `plugin.pub.pem`。
 

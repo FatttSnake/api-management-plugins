@@ -179,6 +179,8 @@ apiPlugin {
     description = "把地理编码开放成 API"   // 可选
     author = "你的名字"                    // 可选
     mainClass = "com.example.geo.GeoLifecycle"  // 有生命周期时可选
+    // 仅当多个模块必须共享一个类加载器时，例如 Flyway 的数据库支持：
+    // sharedLoader("org.flywaydb:flyway-core", "org.flywaydb:flyway-mysql")
 }
 ```
 

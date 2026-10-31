@@ -180,6 +180,8 @@ apiPlugin {
     description = "Expose geocoding as an API"   // optional
     author = "Your name"                          // optional
     mainClass = "com.example.geo.GeoLifecycle"    // only when you have a lifecycle
+    // Only when several modules must share one class loader, e.g. Flyway's database support:
+    // sharedLoader("org.flywaydb:flyway-core", "org.flywaydb:flyway-mysql")
 }
 ```
 

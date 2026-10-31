@@ -1,4 +1,4 @@
-package com.example.filebox
+package com.example.filebox.api
 
 /**
  * Filebox business code
