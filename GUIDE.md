@@ -1,25 +1,25 @@
 # API Plugin Development Guide
 
-This guide is for **plugin developers**. An API is authored, packaged and signed independently as a **plugin jar**, uploaded to the gateway and **hot-plugged** (install / disable / upgrade / uninstall) with automatic re-mounting after restart. The `echo/` directory in this repository is a complete, runnable example — reading it side by side with this document works best.
+This guide is for **plugin developers**. An API is authored, packaged and signed independently as a **plugin jar**, uploaded to the gateway and **hot-plugged** (install / disable / upgrade / uninstall) with automatic re-mounting after restart. `echo/` and `filebox/` in this repository are complete, runnable examples — reading them side by side with this document works best.
 
-**Writing a plugin is a single `build.gradle.kts` (~10 lines) + your Kotlin sources**: signing, keys, the descriptor and documentation resources are all handled by the Gradle plugin `top.fatweb.api-plugin`.
+**Writing a plugin is one `build.gradle.kts` (~10 lines) + your Kotlin sources.** Signing, keys, the descriptor, the dependency lock and OpenAPI metadata are all handled by the Gradle plugin `top.fatweb.api-plugin`.
 
-- SDK artifact: `top.fatweb:api-management-plugin-sdk` (added automatically by the Gradle plugin)
-- Gradle plugin: `top.fatweb.api-plugin` (recommended by this guide)
-- SDK packages: `top.fatweb.apimanagement.sdk.annotation` / `top.fatweb.apimanagement.sdk.plugin`
+- Contract artifact: `top.fatweb:api-management-gateway-api` (added automatically by the Gradle plugin)
+- Gradle plugin: `top.fatweb.api-plugin`
+- API package: `top.fatweb.apimanagement.api.v1`
 - Gateway / console: [api-management](https://github.com/FatttSnake/api-management) · [api-management-console](https://github.com/FatttSnake/api-management-console)
 
 ---
 
-## 0. Prerequisite: make the SDK and Gradle plugin available
+## 0. Prerequisite: publish the contract and Gradle plugin
 
-The Gradle plugin and SDK are built and published together from the **gateway repository**. Before first use, run this once inside the [api-management](https://github.com/FatttSnake/api-management) repository (installs the artifacts into your local Maven repository):
+The Gradle plugin and the contract are built and published from the **gateway repository**. Before first use, run this once inside [api-management](https://github.com/FatttSnake/api-management):
 
 ```shell
-./gradlew :plugin-sdk:publishToMavenLocal :plugin-gradle-plugin:publishToMavenLocal
+./gradlew :gateway-api:publishToMavenLocal :plugin-signing:publishToMavenLocal :plugin-gradle-plugin:publishToMavenLocal
 ```
 
-A plugin project then resolves them by adding `mavenLocal()` under `pluginManagement` in its `settings.gradle.kts`. If you publish to a private Nexus instead, add that repository likewise (the SDK version can be overridden with `-PapiPlugin.sdkVersion=<version>`).
+A plugin project resolves them by adding `mavenLocal()` under `pluginManagement` in its `settings.gradle.kts`. If you publish to a private Nexus instead, add that repository likewise.
 
 Re-run it after pulling a newer gateway so the Gradle plugin and the tasks it contributes are current.
 
@@ -28,31 +28,33 @@ Re-run it after pulling a newer gateway so the Gradle plugin and the tasks it co
 ## 1. Overall model
 
 ```
-Plugin project (standalone Gradle build)           Gateway (api-management-backend)
+Plugin project (standalone Gradle build)           Gateway (api-management)
 ┌──────────────────────────────────────┐        ┌──────────────────────────────────────────┐
-│ Kotlin sources (incl. response DTOs) │ upload │ PluginSigner.verify (integrity)          │
-│ (build.gradle.kts declares apiPlugin)│──────▶│ Trust store check (pub key keyId         │
-│                                      │        │   present & enabled)                     │
-│ The Gradle plugin does at            │        │ Child-first ClassLoader loads jar        │
-│ build time:                          │        │ Child container GenericApplicationContext│
-│  ├ generate api-plugin.json          │        │ RequestMappingInfo + ApiVersionCondition │
-│  ├ genPluginKeys → keys/             │        │ → registerMapping                        │
-│  ├ embed plugin.pub.pem              │        │ DB upsert (plugin/API/permission tree)   │
-│  └ signPlugin (Ed25519)              │        │ Auto re-mount from blob on startup       │
-└──────────────────────────────────────┘        └──────────────────────────────────────────┘
+│ Kotlin sources (ApiPlugin entry)     │ upload │ PluginSigner.verify (integrity)          │
+│ build.gradle.kts declares apiPlugin  │──────▶│ Trust store check (keyId present, enabled)│
+│                                      │        │ PluginClassLoader + module loaders        │
+│ Build time:                          │        │ ApiPlugin.onStart → routes                │
+│  ├ api-plugin.json                   │        │ Route registry + ApiAccessInterceptor     │
+│  ├ api-plugin-deps.json (lock)       │        │ DB upsert (plugin/API/permission tree)    │
+│  ├ module jars                       │        │ Re-mount from the stored jar on startup   │
+│  ├ plugin.pub.pem                    │        └──────────────────────────────────────────┘
+│  └ Ed25519 signature                 │
+└──────────────────────────────────────┘
 ```
+
+The plugin jar is thin: its runtime dependencies are separate module jars named by the lock. The gateway stores modules content-addressed, verifies SHA-256, and gives a plugin one class loader per loading unit.
 
 ### Security boundary (read this carefully)
 
-Plugin code runs **inside the gateway JVM**; no data isolation can stop malicious code. **The real anti-malware boundary is: mandatory Ed25519 signature + the signing public key must be in the administrator-maintained trust store.** Data isolation (an independent datasource per plugin + the narrow `PluginContext` API) is defense-in-depth against accidents, not against malice. Therefore:
+Plugin code runs **inside the gateway JVM**; no data isolation can stop malicious code. **The real anti-malware boundary is the mandatory Ed25519 signature plus the administrator-maintained trust store.** Data isolation (plugin-owned datasources, a narrow `GatewayContext`) is defense-in-depth against accidents, not against malice.
 
 - **The private key is the root of identity** — whoever holds it can publish plugins as you. It lives only in your `keys/private.pem`; **never commit it or leak it**.
-- Submit the public key `keys/public.pem` to the gateway administrator to add it to the trust store, otherwise your plugin cannot be installed.
-- **Deleting `keys/private.pem` and rebuilding changes your identity**: previously installed plugins will no longer be re-mounted after the next restart because the signer is no longer trusted.
+- Submit `keys/public.pem` to the gateway administrator; an untrusted or disabled key is refused at install.
+- **Deleting `keys/private.pem` and rebuilding changes your identity**: previously installed plugins will not be re-mounted after restart because the signer is no longer trusted.
 
 ---
 
-## 2. One-click scaffold: the minimal plugin project
+## 2. Scaffold: the minimal plugin project
 
 Create a directory (e.g. `geo/`) with three files plus your sources:
 
@@ -61,9 +63,7 @@ geo/
 ├─ settings.gradle.kts
 ├─ build.gradle.kts
 ├─ keys/            # auto-generated on first build (never commit private.pem)
-└─ src/main/
-   ├─ kotlin/com/example/geo/GeoController.kt    # your @ApiController
-   └─ kotlin/com/example/geo/GeoResponses.kt     # response DTOs (docs are generated from them)
+└─ src/main/kotlin/com/example/geo/GeoPlugin.kt
 ```
 
 ### 2.1 `settings.gradle.kts`
@@ -73,148 +73,133 @@ pluginManagement {
     repositories {
         mavenCentral()
         gradlePluginPortal()
-        mavenLocal()   // resolves top.fatweb.api-plugin and the SDK snapshot
+        mavenLocal()   // resolves top.fatweb.api-plugin and the gateway-api snapshot
     }
 }
 
 rootProject.name = "geo-plugin"
 ```
 
-### 2.2 `build.gradle.kts` (that is all the build config)
+### 2.2 `build.gradle.kts`
 
 ```kotlin
 plugins {
-    kotlin("jvm") version "2.3.21"               // your Kotlin version
+    kotlin("jvm") version "2.3.21"
     id("top.fatweb.api-plugin") version "1.0.0-SNAPSHOT"
 }
 
 version = "1.0.0"                                 // also the default versionName
 
 apiPlugin {
-    pluginId = "geo"                              // unique ID, ^[a-z][a-z0-9-]*$
-    pluginName = "Geo Plugin"                     // display name
-    versionCode = 1                               // required; above the installed one is an upgrade, the same one re-deploys
+    pluginId = "geo"                              // ^[a-z][a-z0-9-]{0,63}$
+    pluginName = "Geo Plugin"
+    versionCode = 1                               // required; higher upgrades, same redeploys in place
     description = "Expose geocoding as an API"    // optional
     author = "Your name"                          // optional
-    mainClass = "com.example.geo.GeoLifecycle"    // only when you have a PluginLifecycle
+    mainClass = "com.example.geo.GeoPlugin"       // required: the ApiPlugin implementation
+    requiresGateway = ">=1.0.0 <2.0.0"            // default
+    requiresGatewayApi = ">=1.0.0-SNAPSHOT <2.0.0" // default is ^1.0
 }
 ```
 
-Defaults of the `apiPlugin` DSL and the descriptor field they map to:
-
 | DSL field | Required | Default | Descriptor field |
 |---|---|---|---|
-| `pluginId` | ✅ | project name | `pluginId` (the plugin's whole identity; `@ApiController` does not repeat it) |
+| `pluginId` | | project name | `pluginId` |
 | `pluginName` | | same as `pluginId` | `name` |
-| `versionName` | | project `version` (blank also falls back) | `versionName` |
-| `versionCode` | ✅ | — (required, no default) | `versionCode` (higher is an upgrade; the installed one may be re-deployed) |
+| `versionName` | | project `version` | `versionName` |
+| `versionCode` | ✅ | — | `versionCode` |
 | `description` / `author` | | empty | same name |
-| `mainClass` | | none | `mainClass` (when absent the gateway uses the plugin's only `PluginLifecycle` bean; several beans and no `mainClass` fails the install) |
-| `sdkVersion` | | SDK version bundled with the plugin | (dependency only, not in the descriptor) |
-| `archiveName` | | `<pluginId>-<versionName>.jar` | (jar file name) |
-| `sharedLoader(vararg group:artifact)` | | none | (lock `groups`; no descriptor field) |
-
-> The plugin automatically adds repositories (`mavenCentral` + `mavenLocal`) and the SDK's `implementation` dependency; on **every build** it generates `META-INF/api-plugin.json` and `META-INF/plugin.pub.pem` from the DSL above (inside `build/`), generates `keys/`, names the jar `<pluginId>-<versionName>.jar` and signs it. You do not hand-write `api-plugin.json` / `plugin.pub.pem` in the repo.
+| `mainClass` | ✅ | — | `mainClass` |
+| `requiresGateway` | | `>=1.0.0 <2.0.0` | `requiresGateway` |
+| `requiresGatewayApi` | | `^1.0` | `requiresGatewayApi`; its minimum major is also the compile-time gateway-api version |
+| `archiveName` | | `<pluginId>-<versionName>.jar` | jar file name |
+| `sharedLoader(vararg group:artifact)` | | none | lock `groups` |
 
 ### 2.3 `.gitignore`
 
 ```gitignore
-keys/            # keys (the private key must never be committed)
+keys/            # the private key must never be committed
 build/
 .gradle/
 ```
 
-### 2.4 Four commands
+### 2.4 Build tasks
 
 ```shell
-./gradlew build           # one-shot: keys/ + descriptor + pub.pem + signature
-./gradlew genPluginKeys   # regenerate/confirm keys (skips when they exist)
-./gradlew verifyPlugin    # self-check the jar signature (fails on invalid)
-./gradlew deployPlugin    # build + sign + verify + upload, to a running gateway
+./gradlew build           # keys + descriptor + lock + modules + pub.pem + signature
+./gradlew verifyPlugin    # self-check the jar signature
+./gradlew deployPlugin    # build + sign + verify + upload modules and jar
 ```
 
-Artifact: `build/libs/<pluginId>-<versionName>.jar`, **already signed**, ready to upload.
+Artifact: `build/libs/<pluginId>-<versionName>.jar`, already signed. Dependency modules are under
+`build/generated/api-plugin-modules/`.
 
-The plugin contributes six tasks in the `api plugin` group: `generatePluginDescriptor` and `preparePluginPubKey` (both wired into `jar`, so a build runs them for you), `genPluginKeys`, `signPlugin` (wired into `build`), `verifyPlugin` and `deployPlugin`. The four above are the ones worth running by hand.
+The plugin contributes `generatePluginLock`, `generatePluginDescriptor`, `genPluginKeys`,
+`preparePluginPubKey`, `checkPluginAbi`, `signPlugin`, `verifyPlugin` and `deployPlugin`.
+`generatePluginLock`, `generatePluginDescriptor` and `preparePluginPubKey` are wired into `jar`;
+`checkPluginAbi` is wired into `check`, and `signPlugin` into `build`.
 
-`deployPlugin` is §7's step 3 without the browser, and it is what an edit-and-redeploy loop uses:
+`deployPlugin` is §7's upload step without the browser:
 
 ```shell
-./gradlew deployPlugin -PapiPlugin.serverUrl=http://localhost:8111 -PapiPlugin.accessToken=<token>
+./gradlew deployPlugin -PapiPlugin.serverUrl=http://localhost:8080 -PapiPlugin.accessToken=<token>
 ```
 
-Both settings also read an environment variable (`API_PLUGIN_SERVER_URL`, `API_PLUGIN_ACCESS_TOKEN`), and neither belongs in `build.gradle.kts`. The token is the `accessToken` a console login returns and lasts 2 hours by default; it is not rotated by anything, so the same one keeps working until it expires (or until a gateway whose Redis is not persistent is restarted). Add `-PapiPlugin.trustSigner=true` to register the jar's signer with the gateway in the same run — a one-off convenience, since a signer normally stays trusted.
+Both settings also read an environment variable (`API_PLUGIN_SERVER_URL`, `API_PLUGIN_ACCESS_TOKEN`), and neither belongs in `build.gradle.kts`. The token is the `accessToken` a console login returns. Add `-PapiPlugin.trustSigner=true` to register the jar's signer in the same run.
 
-For breakpoints in plugin source, and for the changes you can make without deploying at all, see the gateway's [docs/plugin-debugging.md](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-debugging.md).
+For breakpoints in plugin source, see the gateway's [docs/plugin-debugging.md](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-debugging.md).
 
 ### 2.5 Manual approach (without the Gradle plugin)
 
-If you only want a signing task without the DSL, the minimal `build.gradle.kts` is:
-
-```kotlin
-plugins { kotlin("jvm") version "2.3.21" }
-repositories { mavenCentral(); mavenLocal() }
-dependencies {
-    implementation("top.fatweb:api-management-plugin-sdk:1.0.0-SNAPSHOT")
-}
-kotlin { jvmToolchain(25) }
-
-val signPlugin by tasks.registering(JavaExec::class) {
-    dependsOn(tasks.jar)
-    mainClass.set("top.fatweb.apimanagement.sdk.plugin.PluginSigner")
-    classpath = configurations.runtimeClasspath.get()
-    args("sign",
-         tasks.jar.get().archiveFile.get().asFile.absolutePath,
-         layout.projectDirectory.file("keys/private.pem").asFile.absolutePath)
-}
-tasks.build { dependsOn(signPlugin) }
-```
-
-In the manual mode you must maintain `keys/private.pem`, `src/main/resources/META-INF/api-plugin.json` and `plugin.pub.pem` yourself (run `PluginSigner genkey keys/`, then copy `public.pem` to `plugin.pub.pem`). When hand-writing `api-plugin.json`, `versionName` is required (`pluginId` and `name` are too).
+The Gradle plugin is the supported path: it generates the descriptor and lock, wires the jar and signs it. A hand-maintained build has to reproduce all of that — descriptor at `META-INF/api-plugin.json`, lock at `META-INF/api-plugin-deps.json`, public key at `META-INF/plugin.pub.pem`, signature at `META-INF/plugin.sig`, and the module jars — and is out of scope for this guide.
 
 ---
 
 ## 3. Descriptor
 
-Generated by the Gradle plugin from `apiPlugin { }` at `build` time (see the mapping in 2.2). `echo/` produces something like:
+Generated by the Gradle plugin from `apiPlugin { }` at build time. `echo/` produces:
 
 ```json
 {
+  "format": 1,
   "pluginId": "echo",
   "name": "Echo 插件",
   "versionName": "1.0.0",
   "versionCode": 1,
-  "description": "Echo plugin demonstrating the whole hot-plug lifecycle",
+  "description": "Echo 插件，演示 API 插件热插拔全流程（安装/升级/卸载/禁用/签名/文档）",
   "author": "FatttSnake",
-  "mainClass": "com.example.echo.EchoLifecycle"
+  "mainClass": "com.example.echo.EchoPlugin",
+  "requiresGateway": ">=1.0.0 <2.0.0",
+  "requiresGatewayApi": ">=1.0.0-SNAPSHOT <2.0.0"
 }
 ```
 
 | Field | Required | Description |
 |---|---|---|
-| `pluginId` | ✅ | Unique ID, `^[a-z][a-z0-9-]{0,63}$` — at most 64 characters, the width of the gateway's `plugin_id` column. Namespaces every endpoint as `/api/{plugin}/v{version}/…` |
+| `format` | ✅ | Descriptor format, currently `1` |
+| `pluginId` | ✅ | Unique ID, `^[a-z][a-z0-9-]{0,63}$`; namespaces every endpoint as `/api/{plugin}/v{version}/…` |
 | `name` | ✅ | Display name (menus / permission tree / docs) |
-| `versionName` | ✅ | Human-readable version, e.g. `1.2.0`; **required in a hand-written descriptor** (with the Gradle plugin it defaults to the project `version`) |
-| `versionCode` | | Integer, at least 1. A value **above** the installed one is an upgrade; deploying **the installed one** again is allowed and replaces the code in place, which is what an edit-and-redeploy loop does repeatedly; a value **below** it is refused |
-| `description` / `author` | | Description / author |
-| `mainClass` | | FQCN of the `PluginLifecycle` implementation (needs `@Component`, and must fall inside a scanned package — see §6.1). When absent the gateway uses the plugin's only `PluginLifecycle` bean; a value matching no bean, or several lifecycle beans with no `mainClass`, **fails the install** |
-
-> `versionCode` follows the Android semantics in one respect — **only one instance per `pluginId` is allowed** — but not in the other: an upgrade has to move to a higher `versionCode`, while re-deploying the version that is already installed is permitted and simply replaces it in place. Only a **lower** one is refused, so nothing has to be bumped to iterate on a plugin during development.
+| `versionName` | ✅ | Human-readable version, e.g. `1.2.0` |
+| `versionCode` | ✅ | Integer, at least 1. A value **above** the installed one is an upgrade; deploying **the installed one** again replaces it in place; a value **below** it is refused |
+| `mainClass` | ✅ | FQCN of the `ApiPlugin` implementation |
+| `requiresGateway` / `requiresGatewayApi` | ✅ | Version ranges checked against the running gateway |
+| `description` / `author` | | Metadata |
 
 ---
 
 ## 4. Signing and the trust store
 
-### 4.1 Generating keys (automatic)
+### 4.1 Keys (automatic)
 
 `./gradlew build` (or `genPluginKeys`) generates an Ed25519 key pair into `keys/` on first run:
 
 - `keys/private.pem` (PKCS8) — used only for local signing, **never commit / leak it**
-- `keys/public.pem` (SPKI) — submit to the gateway admin to add to the trust store
+- `keys/public.pem` (SPKI) — submit to the gateway admin
 
-At build time the public key is embedded in the jar as `META-INF/plugin.pub.pem`; the signature `META-INF/plugin.sig` is written by `signPlugin`.
+The public key is embedded in the jar as `META-INF/plugin.pub.pem`; `META-INF/plugin.sig` is written
+by `signPlugin`.
 
-> **Changing identity**: delete `keys/private.pem` and run `build` again — a fresh pair is generated (and the jar's embedded public key and signature update accordingly).
+> **Changing identity**: delete `keys/private.pem` and run `build` again — a fresh pair is generated.
 
 ### 4.2 Local self-check
 
@@ -230,7 +215,7 @@ POST /system/api/plugin/key
 { "publicKey": "<contents of keys/public.pem>", "alias": "Your name" }
 ```
 
-The gateway derives `keyId` from the public key automatically (SHA-256 of the SPKI). After that your plugin can be installed. Trust-store management endpoints:
+The gateway derives `keyId` from the public key (SHA-256 of the SPKI).
 
 | Method | Path | Description |
 |---|---|---|
@@ -239,338 +224,310 @@ The gateway derives `keyId` from the public key automatically (SHA-256 of the SP
 | PATCH | `/system/api/plugin/key` | Enable / disable |
 | DELETE | `/system/api/plugin/key/{keyId}` | Delete |
 
-> Revocation: once the admin deletes/disables your public key, installed plugins will **not be re-mounted** on the next restart because the signer is no longer trusted (the database row is kept, and `loadError` records the reason).
+> Revocation: once the admin deletes or disables your public key, installed plugins are **not re-mounted** on the next restart; the database row is kept and `loadError` records the reason.
 
 ---
 
-## 5. OpenAPI documentation
+## 5. Programming model
 
-**There is no hand-written OpenAPI fragment to maintain.** On every mount, the gateway generates an OpenAPI 3.1 fragment (`paths` + `components.schemas`) by reflecting over your controllers, stores it on the plugin row, and serves it to end users through `GET /user/api/docs/{pluginId}`. The fragment comes from the same reflection the gateway mounts the endpoints from, so it cannot drift from your `@Operation` / `@GetMapping` declarations.
-
-To make it complete, express the details in code:
-
-### 5.1 Return a concrete type, not a `Map`
-
-`ApiResponse<Map<String, Any?>>` can only generate an open object, `{"type":"object","additionalProperties":{}}` — a map's keys are not knowable at runtime. Declare a DTO instead:
+Plugins do not use Spring MVC annotations and do not get a Spring child context. Implement
+`ApiPlugin` and register routes on the `GatewayContext` passed to `onStart`:
 
 ```kotlin
-// GeoResponses.kt
-data class GeocodeResponse(
-    @field:Schema(description = "Formatted address", example = "…") val address: String,
-    @field:Schema(description = "Latitude") val latitude: Double?,
-    @field:Schema(description = "Longitude") val longitude: Double?
-)
-
-// GeoController.kt
-@Operation(summary = "Geocode", description = "Resolve an address to coordinates", operationId = "geocode")
-@GetMapping("/geocode")
-fun geocode(@RequestParam("address") address: String): ApiResponse<GeocodeResponse> =
-    ApiResponse.ok(geocodeService.geocode(address))
-```
-
-The generated `data` is then the `GeocodeResponse` schema, with each field's type, description and nullability. **Watch the wire format**: a DTO fixes its field names and nullability, so choose them deliberately.
-
-### 5.2 Parameters, body, descriptions
-
-- `@PathVariable` / `@RequestParam` / `@RequestHeader` / `@CookieValue` on a method parameter become `parameters` (`in` and `required` come from the annotation; an unnamed one takes its Kotlin parameter name);
-- `@RequestBody` becomes a JSON `requestBody`; `@RequestPart` becomes `multipart/form-data`, one property per part;
-- Add prose with the swagger annotations: `@Parameter(description = ..., example = ...)` on a parameter, `@field:Schema(description = ..., example = ...)` on a DTO field;
-- `operationId` / `summary` / `description` come from the method's `@Operation` (`operationId` is still the endpoint's persisted identity, and is required).
-
-### 5.3 How it is generated
-
-- The `paths` key is the full public path `/api/{plugin}/v{version}/...`, identical to the call URL;
-- The fragment is OpenAPI 3.1, so its Schema Objects follow JSON Schema 2020-12: nullability is a type union (`"type": ["integer", "null"]`), examples are a `examples: [value]` array, and binary payloads use `contentMediaType`;
-- An `ApiResponse<T>` return is inlined (`code`/`success`/`msg`/`data`) with `data` being `T`'s schema; `ResponseEntity<ByteArray>` becomes `application/octet-stream`; `Unit`/`void` yields a 200 response with no `content`;
-- One fragment covers all of a plugin's endpoints, across every `@ApiController` version (v1/v2 included);
-- **A generation failure does not block install**: the docs endpoint still returns the API list, the plugin just lacks parameter/structure details, and the gateway logs a WARN.
-
----
-
-## 6. Writing controllers and business code
-
-The SDK's `implementation` dependency is added automatically by the Gradle plugin and exposes spring-web / spring-context / swagger annotations / the Kotlin Jackson module / SLF4J transitively — just write controllers.
-
-### 6.1 `@ApiController`
-
-```kotlin
-@ApiController(
-    version = 1       // API version; one plugin may ship several versions
-)
-class GeoController(
-    private val pluginContext: PluginContext,
-    private val geoService: GeoService
-) {
-    // Per-interface name/description come from @Operation (summary/description)
-    @Operation(summary = "Geocode", description = "Turn an address into coordinates", operationId = "geocode")
-    @GetMapping("/geocode")
-    fun geocode(): ApiResponse<Map<String, Any?>> =
-        ApiResponse.ok(mapOf("result" to geoService.lookup(pluginContext.currentUserId())))
+class GeoPlugin : ApiPlugin {
+    override fun onStart(context: GatewayContext) {
+        context.api().register(
+            RouteDefinition("GET", "/geocode", 1, OperationMetadata("geocode", "Geocode an address"))
+        ) { request ->
+            ApiResponse.ok(mapOf("address" to request.queryParam("address")))
+        }
+    }
 }
 ```
 
-Key points:
+### 5.1 Routes and versions
 
-- Controllers take `PluginContext` and their own `@Service` via **constructor injection**; the child container wires them automatically. Its scanning is narrower than a Spring Boot application's: the base packages are the jar's own top-level packages that lead to one of your `@ApiController` packages, and it looks for `@Component` (so `@Service` / `@Configuration` count). A component outside those roots is **not registered**, and the mount logs a WARN naming it — so keep your collaborators in the same package tree as your controllers. If no root can be derived at all, the install fails with `Cannot derive scan packages`.
-- That child container holds your beans plus the `pluginContext` and `pluginDataSource.<name>` beans the gateway registers, and nothing else: it is a plain `GenericApplicationContext`, with no auto-configuration of any kind. In particular nothing turns scheduling on, so a `@Scheduled` method is never processed unless your own configuration enables it.
-- Plugin-level metadata (`name` / `description` / `author` / version) is declared **once** in `apiPlugin { }` (→ `api-plugin.json`), and so is the plugin's identity. `@ApiController` carries only the API `version` and the sub-`path`; there is no `plugin` attribute to keep in sync.
-- Each endpoint's display `name` = `@Operation.summary` (fallback: method name) and `description` = `@Operation.description` (fallback: empty); they surface in the permission tree and the interface table.
-- Every endpoint method carries an HTTP mapping annotation; only `@GetMapping` / `@PostMapping` / `@PutMapping` / `@PatchMapping` / `@DeleteMapping` are resolved. A method-level `@RequestMapping` is **not** one of them — the install is **refused**, naming the method, rather than the method being silently skipped and the caller getting a 404. `operationId` is **required** on every mapped method (a mapped method without one is refused) and defines the API permission code: `api:{plugin}:v{version}:{operationId}`.
-- `version` must be **at least 1**: a controller declaring `version = 0` or a negative version composes a path the router never matches, so the install refuses it instead of writing an endpoint nothing can reach.
-- Two endpoints of one plugin may not claim the same path and HTTP method — that is refused at install, naming both methods, rather than surfacing later as an ambiguous mapping. The same path under a *different* version is fine: the version is part of the path.
-- `@ApiController(path = "...")` adds a base path after the version segment: `/api/{plugin}/v{version}/<path>/<method path>`. Leading and trailing slashes in `path` are ignored.
-- A method mapping takes exactly one path per method as well: `@GetMapping("/a", "/b")` is refused at install (naming the method) rather than mounting only `/a`. Declare one method per path, or map a common prefix. `value` and `path` are aliases of one another, so declare the path through either — declaring both with different contents is refused rather than resolved to one of them.
-- `params` / `headers` / `produces` / `consumes` are applied as the routing conditions they are declared to be, so a method that requires a parameter or a header behaves the way it would in a Spring application.
-- A plugin may ship **multiple `@ApiController(version=n)`** side by side for forward compatibility. `echo/` does exactly this: `EchoController` (v1, `ping`/`version`) and `EchoControllerV2` (v2, `ping`/`whoami`) coexist in **the same plugin** — from `v2` onward `ping` is served by v2 (rolling compatibility), while the v1-only `version` endpoint is still handled by v1 as a fallback.
+- The path is relative to `/api/{pluginId}/v{apiVersion}` and must not contain a query or fragment.
+- `apiVersion` must be at least 1. A request may select a **higher** version than the one declared;
+  the gateway picks the highest declared version not above the requested one.
+- The same path may be declared under different versions: `echo/` serves v1 `ping` / `version` and
+  v2 `ping` / `whoami` from one plugin.
+- `OperationMetadata.operationId` is the endpoint's stable identity and defines the permission code
+  `api:{plugin}:v{version}:{operationId}`. It must not be blank.
+- Routes are staged during `onStart` and activated only after it returns normally; a failed
+  `onStart` publishes no routes.
 
-### 6.2 The response envelope `ApiResponse<T>`
+### 5.2 Requests and responses
 
-The user-facing response envelope provided by the SDK, decoupled from the gateway-internal `ResponseResult`:
+`ApiRequest` exposes `method`, `path`, `apiVersion`, `principal`, `traceId`, `interfaceInfo`,
+`body` (raw bytes), `pathParam`, `queryParam` / `queryParams`, `header` and `bodyText()`.
 
-| Field | Description |
-|---|---|
-| `code` | Business code; **`0` = success** |
-| `success` | Whether the call succeeded |
-| `msg` | Message |
-| `data` | Payload |
+`ApiResponse.ok(data)` wraps the payload in the standard envelope `{code, success, msg, data}`;
+`ApiResponse.fail(code, message, data)` returns a business error. `ApiResponse.raw(status,
+contentType, bytes)` bypasses the envelope for downloads, and `ApiResponse.text(...)` returns plain
+text. `withHeader(...)` and `withHttpStatus(...)` adjust a response.
 
-Recommended error-code ranges: `1000-1999` client/parameter, `2000-2999` business failure, `5000+` server error. You may also return a bare type (e.g. `ByteArray` + `produces = [IMAGE_PNG]`) for pass-through.
+Recommended error-code ranges: `1000-1999` client/parameter, `2000-2999` business failure, `5000+`
+server error. Plugin-related gateway errors live in `4xxxx` (`40063` install failed, `40064` signer
+not trusted, `40065` signature invalid, `40066` version conflict, `40067` datasource invalid,
+`40068` purge failed) — do not use that range for your own business codes.
 
-> Gateway-side auth / rate-limit / billing errors (invalid key, quota exceeded, etc.) are returned automatically in the `ApiResponse` shape, carrying the gateway's own codes with `code != 0`. Those plugin-related ones live in the 4xxxx range — `40063` install failed, `40064` signer not trusted, `40065` signature invalid, `40066` version conflict, `40067` datasource invalid — so **do not put your own business codes in 4xxxx**: the two spaces overlap numerically inside the same envelope, and nothing distinguishes them but which side emitted them.
+### 5.3 OpenAPI metadata
 
-### 6.3 Data isolation and interaction: `PluginContext`
+There is no hand-written OpenAPI fragment. On every mount the gateway builds an OpenAPI 3.1
+fragment from the routes' `OperationMetadata` and stores it on the plugin row; users get it through
+`GET /user/api/docs/{pluginId}`.
 
-Plugins **never touch the gateway datasource or MyBatis**; they interact with the gateway through `PluginContext`:
-
-| Method | Description |
-|---|---|
-| `datasources` | The plugin's own independent datasources, by declared name (`Map<String, DataSource>`). A name that is absent is one the gateway has nothing to connect with yet (see below) |
-| `storage` | The plugin's own file area, `PluginStorage` (see §6.7) |
-| `currentUserId()` / `currentAccessKeyId()` | Current caller |
-| `getBalance(userId)` | Query a user's balance |
-| `getInterfaceInfo(code)` | Query an API's runtime configuration |
-| `getSetting(key)` | Read a setting: an admin config value (falling back to its schema default) or the plugin's own runtime key (see §6.6) |
-| `saveSetting(key, value)` | Write a runtime key; **writing a key declared by the config schema raises `IllegalArgumentException`** |
-
-**About `datasources`**: a plugin is given an independent datasource only when it declares it in the `datasources` array of its own `plugin-config.json`, and each is keyed by the `name` it was declared under. Without the declaration nothing is ever injected, whatever rows exist, and the admin API refuses to store a configuration for that plugin. The datasources are registered only in that plugin's own child container; the gateway's own datasource is never exposed to plugins.
-
-The declaration carries a `dbType`, and the two dialects are supplied differently:
-
-- **`SQLITE` needs no configuration at all**: declaring it is what supplies it. The gateway provisions `app.storage.plugin-datasource-dir/{pluginId}/{name}.db` while mounting, stores no row and asks the administrator for nothing. Both path segments come from the declaration, so no submitted value ever reaches the path.
-- **`MYSQL` is described by ordinary config fields**, each connection slot of the declaration naming the config key that holds it: `host`, `port`, `database`, `username`, `password` and `params`. The gateway composes the JDBC URL and hands `params` to the driver as connection properties, so neither the plugin author nor the administrator writes a connection string. **A datasource is absent from `context.datasources` until its host has a value**, and the plugin should say so rather than fail obscurely.
-
-A plugin may declare several datasources, and may mix the two dialects. The gateway builds them **while mounting**, and saving a change to one of the config values behind a datasource remounts the plugin on its own (see §8) - so a plugin has to expect `onStop` / `onStart` to run again after such a save, and anything it holds only in memory is lost with them. A plugin the administrator has switched off is the one exception: nothing remounts it until it is switched back on.
-
-### 6.4 Lifecycle: `PluginLifecycle`
+Declare what the endpoint accepts and returns:
 
 ```kotlin
-@Component
-class GeoLifecycle : PluginLifecycle {
-    override fun onStart(context: PluginContext) {}      // every mount, before its routes are registered
-    override fun onStop(context: PluginContext) {}       // every unmount, after the requests it was serving
-    override fun onUninstall(context: PluginContext) {}  // this version is going away (an upgrade too; datasources closed, class loader still open) - never delete data here
-    override fun onPurge(context: PluginContext) {}      // an uninstall that asked for its data to be deleted; throwing here refuses that uninstall
+OperationMetadata(
+    operationId = "geocode",
+    summary = "Geocode",
+    description = "Resolve an address to coordinates",
+    parameters = listOf(
+        ParameterSpec.query("address", description = "Address to resolve", example = "Shanghai"),
+    ),
+    requestBodySchema = null,
+    responses = mapOf(
+        "200" to ResponseSpec(
+            description = "Success",
+            schema = SchemaSpec.objectOf(
+                properties = mapOf(
+                    "address" to SchemaSpec.string("Formatted address"),
+                    "latitude" to SchemaSpec.number("Latitude", nullable = true),
+                    "longitude" to SchemaSpec.number("Longitude", nullable = true),
+                ),
+                required = listOf("address"),
+            ),
+            example = mapOf("address" to "Shanghai", "latitude" to 31.23, "longitude" to 121.47),
+        )
+    ),
+)
+```
+
+`ParameterSpec` covers query / path / header / cookie parameters; `SchemaSpec` has factories for
+objects, arrays, strings, integers, numbers and booleans. The generated `paths` key is the full
+public path `/api/{plugin}/v{version}/...`.
+
+### 5.4 Lifecycle
+
+```kotlin
+class GeoPlugin : ApiPlugin {
+    override fun onStart(context: GatewayContext) {}   // every mount; register routes here
+    override fun onStop() {}                           // every unmount, after in-flight requests drain
+    override fun onUninstall() {}                      // this version is going away (an upgrade too)
+    override fun onPurge() {}                          // a uninstall that asked to delete data
 }
 ```
 
-Reference it in `apiPlugin { mainClass = "…" }`, or let the gateway auto-discover it. `echo/`'s `EchoLifecycle` writes one plugin-scoped setting per hook (`startedAt` / `stoppedAt` / `uninstalledAt`), demonstrating `PluginContext.saveSetting`.
+- `onStart` runs on install, startup recovery, `reload`, a datasource-driven remount, and any save
+  while the plugin is down from a failed mount. Keep nothing essential only in memory.
+- `onStop` runs after in-flight requests drain; routes and plugin events/schedules are removed first.
+- `onUninstall` runs when the declared version changes or the plugin is removed, and on an upgrade.
+  It is **not** the place to delete data: it runs on every release upgrade.
+- `onPurge` runs only when an administrator requests `purgeData=true`, **before** `onStop`, while
+  datasources, storage and settings are still open. If it throws, the uninstall is refused (40068)
+  and nothing is deleted.
+- A disabled plugin is not loaded at the next startup; enabling it mounts the same jar over the
+  same rows.
 
-**A `PluginLifecycle` only runs if it is a Spring bean the child container actually scanned** (see §6.1): one parked outside your controllers' package tree is never instantiated, every hook is skipped, and the mount logs a WARN naming it. The descriptor's `mainClass` says which lifecycle bean is the entry point — without one, the plugin's only `PluginLifecycle` bean is used, and several beans with no `mainClass` **fail the install** rather than resolving to an arbitrary one. A `mainClass` that names no bean fails the install as well. With no lifecycle bean at all, the plugin mounts with no lifecycle whatsoever.
+### 5.5 `GatewayContext`
 
-**A mount is not a one-off, so these hooks are not either.** A plugin is remounted when it is installed, when the gateway starts and re-hydrates it, on `reload`, whenever a save touches a value one of its datasources is composed from, and on **any** save while it is down from a failed mount — and every mount runs `onStart`. A remount builds the new instance and runs its `onStart` **while the instance being replaced is still serving**, and takes that one down only afterwards — so expect your own `onStop` mid-life, after the new `onStart`, keep nothing you need in memory alone, and do not assume `onStart` runs alone: an older instance of the same plugin may still be running. That last point is what decides how you may change your own schema: the new version can migrate in `onStart` (its datasources are open), but the version being replaced is still answering requests against the **old** schema at that moment, and its own `onUninstall` runs with its datasources **already closed**. So a migration that reshapes what the old version reads — a dropped or renamed column — is one the old instance cannot survive. Add tables and columns, leave what exists alone, and only then start depending on the addition.
+`GatewayContext` is the only gateway surface. It never exposes the Spring container, beans, mappers
+or the gateway object mapper.
 
-**Switching a plugin off is not the same as uninstalling it.** `enable: false` takes the plugin's runtime down: its routes are unregistered, it is not loaded at the next gateway start, and a request to one of its APIs answers `Api disabled` instead of reaching your code. Its settings, its datasources, its file area and the grants on its endpoints all stay exactly where they are, and switching it back on mounts the same jar over them. Nothing brings it back on its own — a save never remounts a disabled plugin, and **a new version uploaded over one is stored without being started**.
+| Accessor | Description |
+|---|---|
+| `api()` | Route registration, valid during `onStart` |
+| `settings()` | Plugin-scoped settings: `get`, `getSecret`, `save`, `all` |
+| `dataSources()` | Plugin-owned datasources: `names()`, `all()`, `get(name)` |
+| `storage()` | Plugin file area: content-addressed and location-addressed objects |
+| `users()` / `audit()` / `events()` / `http()` / `scheduler()` | Scoped platform capabilities |
+| `json()` / `logger()` / `metadata()` | JSON codec, plugin logger, descriptor and version metadata |
 
-**What decides `onUninstall` is whether the declared version changed**, not whether the plugin is going away. An upgrade runs it, and re-deploying the version that is already installed does not — nor do `reload`, a datasource-driven remount or a shutdown, all of which put the same jar back up. It runs as that version is taken out of the gateway, and it is **never the place to delete anything**: it runs on *every* release upgrade, so a plugin that released its storage or its settings there would lose them on each of them rather than only when an administrator asked for them to go. Deleting data is `onPurge`'s job, and nothing an upgrade does runs that.
+### 5.6 Settings and configuration
 
-**`onPurge` is the one hook whose failure refuses the uninstall.** It drops the tables the plugin owns — some of them in a MySQL database the gateway never touches — and it runs while the plugin's datasources, storage and settings are all still available. A plugin the administrator had switched off is **mounted one last time** to run it (its `onStart` deliberately not run with it), because a plugin that is not running still has to be able to delete its own data. If it throws, the gateway answers the administrator `40068`, records the reason as the plugin's `loadError`, and deletes **nothing** — the row, its configuration and its files are all still there, so the uninstall can be run again once the cause is fixed.
-
-### 6.5 Bundling dependencies
-
-Third-party dependencies are **packaged automatically**. The Gradle plugin resolves `runtimeClasspath`, filters out the libraries the gateway provides, and stores the rest as original jars under `META-INF/api-plugin-libs/<sha256>.jar`, with an `index.json` describing them. You do **not** need Shadow or a fat jar; the resulting plugin jar may be up to the gateway's `app.storage.plugin-jar-max-bytes` (200 MB by default).
-
-Gateway-provided libraries are not packaged: the SDK, Spring, Springdoc/Swagger, SLF4J/Logback, Jackson (2 and 3), Micrometer, commons-logging, JSpecify, Kotlin/Kotlinx, Jakarta APIs, Tomcat, MyBatis-Plus, HikariCP, MySQL/SQLite/Flyway and BouncyCastle. They resolve from the gateway at runtime. Set `apiPlugin { bundleDependencies = false }` to keep a thin jar, and use `compileOnly` for a dependency you compile against but never want packaged.
-
-The gateway extracts the nested jars to a content-addressed cache and shares one class loader per dependency digest and direct-dependency set across plugins, so the same library is defined once however many plugins use it. Each library keeps its own `META-INF/services` and multi-release layout; dependency classes are never merged into your jar.
-
-Only these class-name prefixes are delegated to the gateway's parent loader (so annotation/serialization class identity stays consistent): `java.* javax.* jakarta.* sun.* jdk.* org.springframework.* org.apache.commons.logging.* io.micrometer.* org.jspecify.* org.slf4j.* tools.jackson.* com.fasterxml.* io.swagger.* org.springdoc.* com.baomidou.* com.zaxxer.hikari.* com.mysql.cj.jdbc.* org.sqlite.* kotlin.* kotlinx.* top.fatweb.apimanagement.*`. Everything else is loaded from your bundled libraries first.
-
-Those prefixes resolve **from the parent alone, with no fallback to the jar**: a class under one of them always comes from the gateway, so bundling a replacement has no effect. Your own code belongs outside `top.fatweb.apimanagement.*`, and the pool/driver classes the gateway already has cannot be shadowed.
-
-BouncyCastle is provided by the gateway (1.86, `bcprov` + `bcpkix` + `bcutil`). It reaches you on the runtime classpath only, so the compile classpath still needs a declaration — `compileOnly("org.bouncycastle:bcpkix-jdk18on:1.86")` (`bcprov` and `bcutil` come in transitively, and nothing is packaged). A plugin that needs another version sets `apiPlugin { bundleBouncyCastle = true }`, which packages the full BC closure. Because `Security` providers are registered JVM-wide, a plugin that bundles its own BC must pass a `Provider` instance to `JcaContentSignerBuilder.setProvider(...)`, `JcaX509CertificateConverter.setProvider(...)`, etc. — **never call `Security.addProvider`**: a global registration pins that plugin's shared class loader across reloads and collides with the gateway's `"BC"` provider.
-
-> The SDK declares `spring-web` / `spring-context` / `swagger-annotations` / `slf4j-api` / Jackson 3 (`jackson-module-kotlin`): log through `LoggerFactory` and serialize through `jacksonObjectMapper()`. `org.slf4j.` and `tools.jackson.` are delegated upwards, so at runtime your logging calls land on the gateway's binding and your mapper is the gateway's Jackson — the build already filters them out. Release whatever else you hold yourself in `onStop`.
-
-### 6.6 Declaring your configuration: `META-INF/plugin-config.json`
-
-A plugin declares in its own jar *which* settings an administrator owns, how they render and what their defaults are. The gateway reads that file **while mounting**, snapshots it onto the plugin row, and the admin API serves that declaration with the current values folded into it - the console is what renders the form from the result. The plugin itself still just reads `context.getSetting(key)` - **no plugin code changes for configuration**.
+A plugin declares **which settings an administrator owns** in `META-INF/plugin-config.json`. The
+gateway reads it while mounting, snapshots it onto the plugin row, and the console renders the form
+from it. The plugin reads values through `context.settings()`; no plugin code changes for
+configuration.
 
 ```json
 {
   "datasources": [
-    {
-      "name": "main",
-      "dbType": "mysql",
-      "required": true,
-      "host": "db.host",
-      "port": "db.port",
-      "database": "db.name",
-      "username": "db.user",
-      "password": "db.password",
-      "params": "db.params"
-    },
+    { "name": "main", "dbType": "mysql", "required": true,
+      "host": "db.host", "port": "db.port", "database": "db.name",
+      "username": "db.user", "password": "db.password", "params": "db.params" },
     { "name": "cache", "dbType": "sqlite" }
   ],
   "groups": [
-    {
-      "key": "db",
-      "title": "Database",
-      "fields": [
+    { "key": "db", "title": "Database", "fields": [
         { "key": "db.host", "type": "string", "title": "Host" },
-        { "key": "db.port", "type": "number", "title": "Port",
-          "default": 3306, "minimum": 1, "maximum": 65535, "integer": true },
+        { "key": "db.port", "type": "number", "title": "Port", "default": 3306, "minimum": 1, "maximum": 65535, "integer": true },
         { "key": "db.name", "type": "string", "title": "Database" },
         { "key": "db.user", "type": "string", "title": "Username" },
         { "key": "db.password", "type": "secret", "title": "Password" },
         { "key": "db.params", "type": "string", "title": "Driver parameters" }
-      ]
-    },
-    {
-      "key": "share",
-      "title": "Sharing",
-      "fields": [
-        { "key": "ttlHours", "type": "number", "title": "Link life (hours)",
-          "default": 1, "minimum": 1, "maximum": 168, "integer": true },
-        { "key": "allowSnapshot", "type": "boolean", "title": "Enable snapshots", "default": true },
-        { "key": "mode", "type": "enum", "title": "Mode", "default": "fast",
-          "options": [ { "value": "fast", "label": "Fast" }, { "value": "slow" } ] },
-        { "key": "notice", "type": "text", "title": "Notice", "maxLength": 200 },
-        { "key": "uploadToken", "type": "secret", "title": "Upload token" }
-      ]
-    }
+    ] }
   ]
 }
 ```
 
-A datasource entry takes:
+- Field types: `string` / `text` / `number` / `boolean` / `enum` / `secret`. Every value is a string
+  on the wire and in storage.
+- A `default` is declared once and is never stored; `settings().get(key)` falls back to it.
+- A declared key is administrator-owned: `settings().save(...)` refuses it. Undeclared keys belong
+  to the plugin (for example `startedAt`).
+- Secrets are encrypted at rest and never returned by the admin API: `value` is `null`, `hasValue`
+  says whether one is stored. Leaving a secret key out of a save keeps it; a blank clears it.
+  `settings().getSecret(key)` reads it as plaintext.
+- A `mysql` datasource is configured once **both** its host and database have values; blanking
+  either un-configures it, not an error. A `sqlite` datasource needs no configuration at all.
+  Without a `datasources` entry a plugin gets no datasource, whatever rows exist.
+- An ordinary value takes effect on the next read without a remount. Saving a value a datasource is
+  composed from **remounts** the plugin, because the gateway builds the connection.
+- The JSON Schema at
+  [`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json)
+  mirrors these checks for editors and CI. Do not add `$schema` to the file itself: the gateway
+  accepts only `groups` and `datasources` at the top level.
 
-| Field | Description |
-|---|---|
-| `name` | The name the plugin asks its datasource by: `^[a-z][a-z0-9-]*$`, unique in the plugin. It is also a path segment and a bean-name suffix, which is why it is held to a plain lowercase word |
-| `dbType` | `mysql` / `sqlite`, required. It decides how the gateway supplies the datasource |
-| `required` | Whether the plugin cannot run without it. **Reporting only** - it never makes a config field required, and the plugin still mounts without one |
-| `host` `port` `database` `username` `password` `params` | `mysql` only: the config key holding each connection fact. `password` must be a `secret` field, every other slot a `string` / `text` one, and `port` a `number` one |
+### 5.7 File storage and external links
 
-A `mysql` datasource has to name at least `host` and `database`; a `sqlite` one names no slot at all. One config key cannot be claimed by two slots or two datasources, a referred key has to exist, and a `password` slot may not point at a `required` field - a required field refuses a blank submission, so the password could then never be cleared.
-
-| Field | Description |
-|---|---|
-| `key` | Config key: `^[A-Za-z][A-Za-z0-9._-]*$`, at most 100 characters, unique in the plugin; it is the setting key in `t_b_api_plugin_setting` |
-| `type` | `string` / `text` / `number` / `boolean` / `enum` / `secret`. **Every value is a string** on the wire and in storage (a boolean is `"true"` / `"false"`) |
-| `title` / `description` / `placeholder` | Display text |
-| `default` | Default value; **never stored as a value row**, it is what an unset key reads as. A secret must not declare one |
-| `required` | Whether the field must resolve to a value: a key that was submitted has to carry a non-blank one, while a key that was left out is satisfied by a stored value or a declared default. Checked **only for the groups this submission names** - a group left out is one nothing was decided about |
-| `minimum` / `maximum` / `integer` | `number` only |
-| `minLength` / `maxLength` / `pattern` | `string` / `text` / `secret` only |
-| `options` | `enum` only, non-empty and with unique values |
-
-Worth knowing:
-
-- **The `datasources` array is the only declaration of an isolated database**: each entry names a config key per connection fact, so those facts are settings like any other and get the form, the constraints and secret encryption for free. **No entry means no isolated database**: nothing is built or injected, and the admin API refuses to store one. See §6.3.
-- **A default is declared once, in the schema**: the database only stores what the administrator has explicitly overridden, and `getSetting` falls back to the declared default. That is what lets a plugin upgrade change a default, and what saves your code from repeating it.
-- **Ownership**: a key declared here belongs to the administrator, and the plugin's `saveSetting` raises on it. Keys you do not declare stay yours (`startedAt` and friends keep working).
-- **Secrets** are encrypted at rest (AES-GCM, key derived from `app.security.tokenSecret`) and **never returned by the API**: a secret's `value` is always `null`, and `hasValue` says whether one is stored. So keeping a secret means **leaving its key out of the submission**; any other value replaces it and a blank clears it. **There is no mask to echo back** - a console that invents a `******` of its own would overwrite the stored secret on every save. The plugin reads secrets back as plaintext either way. `unreadable: true` marks a stored secret the gateway can no longer decrypt, because `tokenSecret` was rotated after it was written - re-entering the value is the only fix, and until then the plugin's own `getSetting` raises `IllegalStateException`; rotating `tokenSecret` invalidates every secret and external link at once. `hasValue` is present on **every** field, not just secrets: it says whether the administrator has set a value of their own.
-- **Validation is server-side and authoritative**: an undeclared key, a wrong type, an out-of-range number or an enum value outside its options is rejected. A submission that names the same group or the same key twice is refused as a structural mistake, and because the values behind a datasource are what the gateway builds a connection from, a save is also held to the connection rules before anything is written (host shape, port range, database name, and the driver-parameter deny list) - a combination that could never connect is refused rather than stored.
-- **An unparsable schema fails the install** (deliberate fail-fast). No file means no configuration; a broken file means the install is refused with the reason - and so is a schema that duplicates a group or field key, or declares a `mysql` datasource without both a `host` and a `database` slot.
-- **When it takes effect**: an ordinary config value is visible on the plugin's very next read, so nothing has to be remounted. A value a datasource is composed from is different - the gateway builds the connection, so changing one remounts the plugin (see §8). That is decided on the change rather than on the request, so saving an unrelated value does not restart your plugin. The one exception is a plugin that is currently down from a failed mount (`load_error` set): then **any** save remounts it, so an administrator who has fixed the cause gets it back without reaching for `reload`.
-- **Editor and build feedback**: a JSON Schema mirroring these checks ships with the gateway at [`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json). Point your editor or CI at its **raw** URL, `https://raw.githubusercontent.com/FatttSnake/api-management/master/docs/plugin-config.schema.json` (a `.vscode/settings.json` `json.schemas` entry with `fileMatch: ["**/META-INF/plugin-config.json"]`, a JetBrains JSON Schema mapping, or `check-jsonschema` in CI). The `github.com/.../blob/...` page serves HTML, so a consumer handed it fails to load the schema **silently**. What you must **not** do is reference it from inside the file: a `$schema` key is itself an unsupported property, and the gateway accepts only `groups` and `datasources` at the top level - it would refuse the install.
-
-### 6.7 File storage and external links: `PluginStorage`
-
-`context.storage` is a plugin's only file channel, and it offers **two addressing modes that are not interchangeable**:
+`context.storage()` offers two addressing modes that are not interchangeable:
 
 | | Content addressing | Location addressing |
 |---|---|---|
 | Methods | `saveContent` / `loadContent` / `existsContent` / `deleteContent` | `saveFile` / `loadFile` / `existsFile` / `deleteFile` / `fileExternalUrl` |
 | Key | Content SHA-256 (also the return value) | A relative path the plugin picks |
 | Stored as | zstd-compressed, one object per distinct content | Verbatim bytes |
-| External link | **Not possible** (compressed objects cannot be handed to a browser) | Yes, via `fileExternalUrl(path, ttl)` |
+| External link | Not possible | Yes, via `fileExternalUrl(path, ttl)` |
 | Good for | Archives, deduplication, objects only the plugin reads | Files somebody downloads or a browser opens |
 
 ```kotlin
-// Location addressing: stored verbatim, can be linked
 val path = "files/$ownerId/$id.png"
-context.storage.saveFile(path, bytes)
-val url = context.storage.fileExternalUrl(path, Duration.ofHours(2))  // null when the gateway cannot build an absolute URL
+context.storage().saveFile(path, bytes)
+val url = context.storage().fileExternalUrl(path, Duration.ofHours(2))
 
-// Content addressing: identical content is stored once
-val key = context.storage.saveContent(bytes)   // returns the SHA-256
-context.storage.existsContent(key)             // ask before writing whether these bytes are already there
-context.storage.loadContent(key)
+val key = context.storage().saveContent(bytes)   // returns the SHA-256
+context.storage().deleteContent(key)             // one delete per save
 ```
 
-- **Reference counting**: every `saveContent` raises it and **needs exactly one `deleteContent`**. Deleting only decrements the count; the gateway reclaims the bytes.
-- **Path rules**: a `/`-separated relative path whose segments must match `^[A-Za-z0-9][A-Za-z0-9._-]*$` and be at most **200** characters, must not be `.` / `..` or a Windows device name (`con`, `prn`, `aux`, `nul`, `com1`-`com9`, `lpt1`-`lpt9`, with or without an extension), and must not contain `\` or `:`. The whole path is capped at **1024** characters. **Never splice a user-supplied file name into a path** - use a UUID plus a filtered extension and keep the original name in your database.
-- **Namespace**: every path resolves under `data/files/plugin-data/{pluginId}/`; both the signature and the key are composed from the plugin ID, so **no call can reach another plugin or the gateway's own files**. An escaping path is rejected rather than silently followed.
-- **Link semantics**: a login-free bearer credential - readable by whoever holds it until it expires, and **it cannot be revoked** before then. Deleting the file makes it fail immediately. A ttl above the gateway's `external-url-max-ttl` is **clamped** down, while a zero or negative one is **rejected** - a link that never works is never what a caller means; leave the argument out to get the configured default. In `local` mode you get an HMAC-signed `/public/storage/{pluginId}/{path}?e=&s=` URL; in `s3` mode, a presigned object-store URL.
-- **Links share the console's origin in `local` mode**, so every type outside the image whitelist is served as `Content-Disposition: attachment` with `nosniff`.
+- **Reference counting**: every `saveContent` raises it and needs exactly one `deleteContent`.
+- **Path rules**: a `/`-separated relative path, segments `^[A-Za-z0-9][A-Za-z0-9._-]*$`, at most
+  200 characters per segment and 1024 in total; no `.` / `..`, Windows device names, `\` or `:`.
+  Never splice a user-supplied file name into a path.
+- **Namespace**: every path resolves under `data/files/plugin-data/{pluginId}/`; no call can reach
+  another plugin or the gateway's own files.
+- **Link semantics**: a login-free bearer credential that cannot be revoked before it expires;
+  deleting the file makes it fail immediately. A ttl above the configured maximum is clamped; a
+  zero or negative one is rejected.
+
+### 5.8 Dependencies and shared loader groups
+
+The plugin jar is thin. Runtime dependencies are locked at build time and shipped as independent
+module jars. The gateway provides **only** the JDK, Kotlin stdlib and `gateway-api`; Spring,
+Jackson, MyBatis, Hikari, Flyway and JDBC drivers are ordinary plugin dependencies.
+
+By default one module is one loading unit and sees only its declared dependencies. Some libraries
+do not fit that model: Flyway resolves database types from a static `ServiceLoader` registry bound
+to the loader that defined `flyway-core`, and MyBatis-Plus references MyBatis and SLF4J from POM
+dependencies marked optional. Declare such modules as a **shared loader group**:
+
+```kotlin
+apiPlugin {
+    sharedLoader("org.flywaydb:flyway-core", "org.flywaydb:flyway-mysql")
+}
+```
+
+The DSL takes `group:artifact` values without versions (at least two); the resolved version comes
+from the classpath. Group only modules that must be mutually visible, never modules that ship the
+same classes (the first jar by digest wins), and do not create a cycle between loading units. A
+group is the unit of sharing, reference counting and unloading.
+
+A module the lock names but the gateway does not have is downloaded from
+`app.plugin.module.repositories` while `app.plugin.module.online` is true, and accepted only when
+its SHA-256 and size match the lock. `deployPlugin` uploads modules first, so offline deployments
+work without network access.
 
 ---
 
-## 7. Build → upload → authorize → call (full flow, using `echo/`)
+## 6. Descriptor, lock and jar entries
 
-```shell
-# 1. Build and sign (first run auto-generates keys/, descriptor and pub.pem)
-cd echo
-./gradlew build
-# artifact build/libs/echo-1.0.0.jar (already signed); public key in keys/public.pem
-
-# 2. Admin adds the trusted public key (first time; contents from keys/public.pem)
-POST /system/api/plugin/key   {"publicKey": "<...>", "alias": "FatttSnake"}
-
-# 3. Upload and install
-POST /system/api/plugin/install   (multipart: file=@echo-1.0.0.jar, at most 50 MB)
-#    or let the Gradle plugin do it: ./gradlew deployPlugin -PapiPlugin.serverUrl=… -PapiPlugin.accessToken=…
-#    (a re-upload of the version already installed replaces it in place, so an edit loop
-#     does not have to bump apiPlugin.versionCode)
-
-# 3.1 A plugin that declares a SQLite datasource (filebox's `cache`, for instance): it is
-#     ready on install, and there is nothing to configure
-GET  /system/api/plugin/filebox/config
-#    -> datasources: [ {name:"main", dbType:"MYSQL", required:true, configured:false, keys:[...]},
-#                      {name:"cache", dbType:"SQLITE", required:false, configured:true, keys:[]} ]
-#       the SQLite file is data/db/plugin/filebox/cache.db
-
-# 3.2 A plugin that declares a MySQL datasource: its connection facts are ordinary config
-#     values, so they are saved through the config endpoint - and saving them remounts the
-#     plugin on its own, no reload needed. A save is written a group at a time, and a value
-#     left out is one nothing is decided about
-PUT  /system/api/plugin/config
-     {"pluginId":"filebox","groups":[
-        {"key":"db","values":[
-           {"key":"db.host","value":"10.0.0.240"},
-           {"key":"db.port","value":"3306"},
-           {"key":"db.name","value":"filebox"},
-           {"key":"db.user","value":"filebox"},
-           {"key":"db.password","value":"…"},
-           {"key":"db.params","value":"useSSL=false&serverTimezone=UTC"}]}]}
-
-# 3.2.1 Try the connection before saving it (values left out are read from what is stored)
-POST /system/api/plugin/filebox/config/datasource/test
-     {"name":"main","values":[{"key":"db.host","value":"10.0.0.240"},{"key":"db.name","value":"filebox"}]}
-
-# 4. Grant APIs to a user
-GET  /user/api/key/available-apis                 # optional APIs grouped by plugin
-POST /user/api/key   {"permissionCodes": ["api:echo:v1:ping", "api:echo:v1:version", ...]}
-
-# 5. Call (Basic auth accessKey:secretKey)
-GET /api/echo/v1/ping     Authorization: Basic <base64(accessKey:secretKey)>
-GET /api/echo/v1/version
-GET /api/echo/v2/ping     # v2 overrides v1's ping (rolling-compat example)
-GET /api/echo/v2/whoami   # v2 only
+```
+META-INF/api-plugin.json        descriptor format 1
+META-INF/api-plugin-deps.json   dependency lock: coordinates, digests, sizes, direct edges, groups
+META-INF/plugin.pub.pem         signer public key
+META-INF/plugin.sig             Ed25519 signature
 ```
 
-Expected response example (`/api/echo/v2/ping`):
+The lock excludes `top.fatweb:api-management-gateway-api`, `org.jetbrains.kotlin:kotlin-stdlib*`
+and `org.jetbrains:annotations`, which the platform provides. Everything else becomes a module.
+
+---
+
+## 7. Build → upload → configure → call
+
+Using `echo/`:
+
+```shell
+cd echo
+./gradlew build
+# artifact: build/libs/echo-1.0.0.jar (signed); public key in keys/public.pem
+
+# 1. Admin trusts the public key (first time)
+POST /system/api/plugin/key   {"publicKey": "<...>", "alias": "FatttSnake"}
+
+# 2. Upload and install
+POST /system/api/plugin/install   (multipart: file=@echo-1.0.0.jar)
+# or: ./gradlew deployPlugin -PapiPlugin.serverUrl=… -PapiPlugin.accessToken=…
+
+# 3. Grant APIs to a user
+GET  /user/api/key/available-apis
+POST /user/api/key   {"permissionCodes": ["api:echo:v1:ping", "api:echo:v1:version",
+                                         "api:echo:v2:ping", "api:echo:v2:whoami"]}
+
+# 4. Call (Basic auth accessKey:secretKey)
+GET /api/echo/v1/ping
+GET /api/echo/v1/version
+GET /api/echo/v2/ping
+GET /api/echo/v2/whoami
+```
+
+Using `filebox/`:
+
+```shell
+cd filebox
+./gradlew build
+
+# The cache (SQLite) datasource is ready on install; main (MySQL) needs configuration.
+GET  /system/api/plugin/filebox/config
+# -> datasources: [ {name:"main", dbType:"MYSQL", required:true, configured:false, keys:[...]},
+#                   {name:"cache", dbType:"SQLITE", required:false, configured:true, keys:[]} ]
+
+# A save is written a group at a time; a value left out is one nothing is decided about.
+# Saving a datasource value remounts the plugin automatically.
+PUT  /system/api/plugin/config
+     {"pluginId":"filebox","groups":[{"key":"db","values":[
+        {"key":"db.host","value":"10.0.0.240"},
+        {"key":"db.port","value":"3306"},
+        {"key":"db.name","value":"filebox"},
+        {"key":"db.user","value":"filebox"},
+        {"key":"db.password","value":"…"},
+        {"key":"db.params","value":"useSSL=false&serverTimezone=UTC"}]}]}
+
+# Optionally test the connection with values that are not saved yet
+POST /system/api/plugin/filebox/config/datasource/test
+     {"name":"main","values":[{"key":"db.host","value":"10.0.0.240"},
+                              {"key":"db.name","value":"filebox"}]}
+
+# Then authorize and call
+POST /user/api/key   {"permissionCodes": ["api:filebox:v1:upload", "api:filebox:v1:list", ...]}
+POST /api/filebox/v1/upload?fileName=report.pdf     (body: raw bytes)
+GET  /api/filebox/v1/files?page=1&size=20
+```
+
+Expected response (`/api/echo/v2/ping`):
 
 ```json
 { "code": 0, "success": true, "msg": "success", "data": { "message": "pong", "version": 2, "userId": 1 } }
@@ -582,29 +539,25 @@ Expected response example (`/api/echo/v2/ping`):
 
 | Operation | How | Description |
 |---|---|---|
-| Enable / disable | `PATCH /system/api/plugin` | `{id, enable}`. Disabling takes the plugin's runtime **down**: it stops serving, it is not loaded at the next gateway start, and its APIs answer `Api disabled`; its configuration, datasources, files and permission grants are all kept, and enabling it again mounts the same jar over them. `PUT /system/api/plugin` carries the same flag alongside the plugin's default price / rate limit / access mode |
-| Read configuration | `GET /system/api/plugin/{pluginId}/config` | returns the declared schema with the current values folded in - per field `value`, `default`, `hasValue` and `unreadable`, with a secret's `value` always `null` - plus the settings each datasource is composed from, and every declared datasource's `name`, `dbType`, `required` and `configured` |
-| Save configuration | `PUT /system/api/plugin/config` | a group at a time: `{pluginId, groups:[{key, values:[{key,value}]}]}`. An ordinary value takes effect immediately; a value left out keeps the stored one, and a blank clears the key (a blank is a value of its own to a text field). Required fields are checked only for the groups the save names. **Changing a value a datasource is composed from remounts the plugin**, so no separate step is needed |
-| Test a connection | `POST /system/api/plugin/{pluginId}/config/datasource/test` | `{name, values}`; a value left out, or sent with no value at all, is read from what is stored. **MySQL only** (a SQLite datasource is a file the gateway supplies); a value belonging to another datasource, or an unconfigured `main`, is refused, and a genuine failure answers 40067 with the driver's reason |
-| Configure a datasource | the config endpoint above | a MySQL datasource is described by the declared fields named in its `datasources` entry. Blanking the host un-configures it, which is not an error - the plugin simply stops being given it |
-| Reload | `POST /system/api/plugin/{pluginId}/reload` | re-mounts the installed jar in place, keeping the version, DB rows, permission tree, configuration and data. For **a jar that has been replaced**; a datasource change does not need it |
-| Upgrade | raise `apiPlugin.versionCode`, rebuild and upload | the old version is replaced **in place**; only a **lower** `versionCode` is rejected (40066). **Everything the administrator set up survives**: the plugin's default price / rate limit / access mode, each interface's own pricing, billing mode, key requirement, rate limit, access mode and enable flag, every role grant on those endpoints, plus its settings, its datasources and its file area. Only an endpoint the new version no longer serves loses its row and its grants. Re-deploying the version already installed does the same thing and is allowed - it is what an edit-and-redeploy loop uses. A plugin the administrator disabled is not re-enabled and not started; the same holds for `reload`, for a datasource-changing config save and for any other save. Internally the new version is built and started first and the old one is taken down only afterwards, so the plugin sees `onStart` (new) → `onStop` → `onUninstall` (old) (see §6.4) |
-| Uninstall | `DELETE /system/api/plugin/{pluginId}?purgeData=false` | routes unregistered, DB row removed, permission tree cleaned. `purgeData` defaults to `false`, which **keeps** the plugin's settings, its SQLite database directory and its files, so reinstalling the same plugin ID picks up where it left off; pass `true` to purge them. **An external MySQL database is not on that list** - the gateway never drops tables in a database it does not own; that is what `onPurge` is for. A plugin that is **not running** (switched off, or down from a failed mount) is mounted for this one last time so its exit hooks still run, and if `onPurge` throws the uninstall is **refused** (40068) with nothing deleted |
-| Restart | nothing to do | installed plugins re-mount automatically from blob; no re-upload |
+| Enable / disable | `PATCH /system/api/plugin` | `{id, enable}`. Disabling takes the runtime down: routes unregistered, not loaded at the next start, its APIs answer `Api disabled`. Configuration, datasources, files and grants are kept; enabling mounts the same jar over them |
+| Read configuration | `GET /system/api/plugin/{pluginId}/config` | Declared schema with current values: per field `value`, `default`, `hasValue`, `unreadable`; a secret's `value` is always `null`; plus every datasource's `name`, `dbType`, `required`, `configured` |
+| Save configuration | `PUT /system/api/plugin/config` | A group at a time: `{pluginId, groups:[{key, values:[{key,value}]}]}`. An ordinary value takes effect immediately; a value left out keeps the stored one; a blank clears it. Changing a datasource value **remounts** the plugin |
+| Test a connection | `POST /system/api/plugin/{pluginId}/config/datasource/test` | `{name, values}`; MySQL only. A genuine failure answers 40067 with the driver's reason |
+| Reload | `POST /system/api/plugin/{pluginId}/reload` | Re-mounts the installed jar in place, keeping version, rows, configuration and data. For a jar that has been replaced; a datasource change does not need it |
+| Upgrade | Raise `apiPlugin.versionCode`, rebuild and upload | The old version is replaced in place; only a lower `versionCode` is rejected (40066). Administrator settings, grants, datasources and files survive. A disabled plugin is not started |
+| Uninstall | `DELETE /system/api/plugin/{pluginId}?purgeData=false` | Routes unregistered, row and permission tree removed. `purgeData=false` keeps settings, SQLite data and files; `true` purges them. An external MySQL database is never dropped by the gateway — that is `onPurge`'s job. A plugin that is down is mounted one last time for its exit hooks, and a failing `onPurge` refuses the uninstall (40068) |
+| Restart | nothing to do | Installed plugins re-mount automatically from the stored jar |
 
 ---
 
 ## 9. FAQ
 
-- **Change identity / revoke old installs**: delete `keys/private.pem` and rebuild — a new public key is minted; send the new `keys/public.pem` to the admin to update the trust store (old plugins are not re-mounted after restart).
-- **`Plugin signer is not trusted`**: the public key has not been uploaded to the trust store, or it has been disabled; add and enable it via `POST /system/api/plugin/key`. (A jar with no signature at all answers `Plugin signature invalid` instead - check that you uploaded the `build` artifact and not the one from `./gradlew jar`.)
-- **`Version code N is older than the installed M`**: the version being deployed is below the one already installed; raise `apiPlugin.versionCode` to upgrade. Deploying the version that is already installed is fine, so only a release has to move it.
-- **The jar from `./gradlew jar` is unsigned**: signing runs as part of `build` / `signPlugin` only — use the `./gradlew build` artifact.
-- **`verifyPlugin` fails**: the public key in the jar does not pair with the signing private key (e.g. one of the files was deleted) — delete the whole `keys/` and rebuild.
-- **Unique-key conflict while writing settings**: the settings live in `t_b_api_plugin_setting`, whose unique key is `(plugin_id, setting_key)` - one row per plugin and key, with no soft-delete column. There is no unique-key conflict to fix on the gateway side: `saveSetting` reads before it writes, and since settings survive a reinstall when `purgeData=false`, a plugin that writes its own runtime keys while also having them declared in its config schema is the thing to look for (a declared key is administrator-owned and is refused by `saveSetting`).
-- **APIs disappear after an upgrade**: the new jar must still contain every `@ApiController` you want to keep; after the old version is uninstalled only the APIs declared by the new jar remain.
-- **The plugin installed, but no lifecycle hook runs / my own `@Service` is not injected**: the component sits outside the packages the child container scans (§6.1) — the mount logs a WARN naming it, so look for that, and move it into the same package tree as your `@ApiController`. A `mainClass` naming a class that is not a bean, or several `PluginLifecycle` beans with no `mainClass`, **fails the install** (§6.4) rather than quietly picking one.
-- **An endpoint 404s**: check that the version in the URL is **at least** the controller's declared `version`, and that the controller does not declare `version = 0` (the install refuses that, since nothing could reach it). A method-level `@RequestMapping` cannot be the cause — it is refused at install (§6.1). One 404 that is not one: a request to an API of a plugin the administrator has **switched off** answers `Api disabled`, not a missing-resource error, because the gateway tells the two apart.
-- **A disabled plugin is still doing something**: check what it does outside its routes. Switching a plugin off takes its runtime down and keeps it down — it is not loaded at the next start either — but this happens to the *runtime*, so a plugin whose work is driven by an outside party (a webhook it registered elsewhere, a service that polls it) is not something the gateway can stop.
-- **A `@Scheduled` method never fires**: the plugin's child container is not auto-configured and enables no scheduling (§6.1) — turn it on in your own configuration if you need it.
-- **How do I see why a plugin did not mount?**: mounting failures are recorded on the plugin row and surface as its `loadError` field, `null` when it loaded — readable from the plugin list or `GET /system/api/plugin/{pluginId}/info`. A plugin that is listed and enabled yet behaves as if it were absent is usually the scan or lifecycle-discovery problem in the two items above, not a failed install.
+- **`Plugin signer is not trusted`**: the public key is not in the trust store, or has been disabled. Add and enable it via `POST /system/api/plugin/key`. A jar with no signature answers `Plugin signature invalid` instead — upload the `build` artifact, not the one from `./gradlew jar`.
+- **`Version code N is older than the installed M`**: raise `apiPlugin.versionCode`; deploying the installed version again is allowed.
+- **The jar from `./gradlew jar` is unsigned**: signing runs as part of `build` / `signPlugin`. Use the `build` artifact.
+- **`verifyPlugin` fails**: the embedded public key does not pair with `keys/private.pem`. Delete `keys/` and rebuild.
+- **APIs disappear after an upgrade**: the new jar must still register every route you want to keep; only the new version's routes remain.
+- **`onStart` is not called / a collaborator is not created**: plugins have no dependency injection or Spring container. Construct collaborators yourself in `onStart`, or keep them as plain objects owned by the plugin instance.
+- **An endpoint 404s**: check that the requested version is at least the route's declared version. A request to an API of a disabled plugin answers `Api disabled`, not a missing-resource error.
+- **A disabled plugin is still doing something**: switching it off stops its routes, scheduler and events. Work driven by an outside party (a webhook registered elsewhere) is outside the gateway's control.
+- **`NoClassDefFoundError` for a library class**: the module is not in the lock, or two modules that must see each other are not in a `sharedLoader` group. Rebuild after changing dependencies.
