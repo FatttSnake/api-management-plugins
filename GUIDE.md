@@ -315,6 +315,10 @@ public path `/api/{plugin}/v{version}/...`.
 ```kotlin
 class GeoPlugin : ApiPlugin {
     override fun onStart(context: GatewayContext) {}   // every mount; register routes here
+    override fun onConfigChanged(                       // administrator save, no remount
+        context: GatewayContext,
+        changedKeys: Set<String>
+    ) {}
     override fun onStop() {}                           // every unmount, after in-flight requests drain
     override fun onUninstall() {}                      // this version is going away (an upgrade too)
     override fun onPurge() {}                          // a uninstall that asked to delete data
@@ -323,6 +327,10 @@ class GeoPlugin : ApiPlugin {
 
 - `onStart` runs on install, startup recovery, `reload`, a datasource-driven remount, and any save
   while the plugin is down from a failed mount. Keep nothing essential only in memory.
+- `onConfigChanged` runs after an administrator saves plugin configuration and the transaction
+  commits, on the mounted instance, with the declared keys whose effective value changed. It is
+  skipped when the save remounts the plugin - the new `onStart` is the notification instead. It
+  runs outside the save transaction; an exception is logged and does not undo the save.
 - `onStop` runs after in-flight requests drain; routes and plugin events/schedules are removed first.
 - `onUninstall` runs when the declared version changes or the plugin is removed, and on an upgrade.
   It is **not** the place to delete data: it runs on every release upgrade.
@@ -340,7 +348,7 @@ or the gateway object mapper.
 | Accessor | Description |
 |---|---|
 | `api()` | Route registration, valid during `onStart` |
-| `settings()` | Plugin-scoped settings: `get`, `getSecret`, `save`, `all` |
+| `settings()` | Plugin-scoped settings: `get`, `getSecret`, `save`, `remove`, `all` |
 | `dataSources()` | Plugin-owned datasources: `names()`, `all()`, `get(name)` |
 | `storage()` | Plugin file area: content-addressed and location-addressed objects |
 | `users()` / `audit()` / `events()` / `http()` / `scheduler()` | Scoped platform capabilities |
@@ -377,16 +385,21 @@ configuration.
 - Field types: `string` / `text` / `number` / `boolean` / `enum` / `secret`. Every value is a string
   on the wire and in storage.
 - A `default` is declared once and is never stored; `settings().get(key)` falls back to it.
-- A declared key is administrator-owned: `settings().save(...)` refuses it. Undeclared keys belong
-  to the plugin (for example `startedAt`).
+- A declared key is administrator-owned: `settings().save(...)` and `settings().remove(...)` refuse
+  it. Undeclared keys belong to the plugin (for example `startedAt`); `remove` deletes one, and
+  deleting a missing key is a no-op.
+- `settings().all()` returns every readable non-secret value: stored plugin-owned keys plus declared
+  values, falling back to their defaults. Secrets never appear.
 - Secrets are encrypted at rest and never returned by the admin API: `value` is `null`, `hasValue`
   says whether one is stored. Leaving a secret key out of a save keeps it; a blank clears it.
   `settings().getSecret(key)` reads it as plaintext.
 - A `mysql` datasource is configured once **both** its host and database have values; blanking
   either un-configures it, not an error. A `sqlite` datasource needs no configuration at all.
   Without a `datasources` entry a plugin gets no datasource, whatever rows exist.
-- An ordinary value takes effect on the next read without a remount. Saving a value a datasource is
-  composed from **remounts** the plugin, because the gateway builds the connection.
+- An ordinary value takes effect on the next read without a remount, and the mounted instance is
+  notified through `onConfigChanged` with the declared keys that actually changed. Saving a value a
+  datasource is composed from **remounts** the plugin, because the gateway builds the connection;
+  the new instance learns the values in `onStart` instead.
 - The JSON Schema at
   [`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json)
   mirrors these checks for editors and CI. Do not add `$schema` to the file itself: the gateway

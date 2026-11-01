@@ -62,7 +62,7 @@ A minimal "echo" plugin demonstrating the programming model:
 | Route registration | `context.api().register(RouteDefinition(...)) { request -> ... }` |
 | Version coexistence | v1 `ping` / `version`, v2 `ping` / `whoami`; a higher requested version rolls forward to the latest matching route |
 | Explicit OpenAPI metadata | `OperationMetadata` + `ParameterSpec` + `ResponseSpec` + `SchemaSpec` |
-| Lifecycle | `onStart` / `onStop` / `onUninstall` write plugin-scoped settings |
+| Lifecycle | `onStart` / `onStop` / `onUninstall` write plugin-scoped settings; `onStart` removes the previous `stoppedAt` marker |
 | Descriptor / docs | `apiPlugin {}` generates `api-plugin.json`; docs come from the declared metadata |
 | Keys / signing | `genPluginKeys` + `signPlugin` run as part of `build` |
 
@@ -94,7 +94,7 @@ A "file box" plugin whose data lives in **two plugin-owned datasources** — met
 | Config takes effect immediately | Ordinary values are read per call; saving a datasource connection remounts the plugin automatically — there is no separate reload step |
 | Location addressing + login-free links | `upload` / `download` / `link` / `remove`: store, read back, mint a temporary external URL, delete |
 | Content addressing + deduplication | `snapshot` / `readSnapshot`: identical text is stored once, keyed by SHA-256 |
-| Lifecycle | `FileboxPlugin` mounts a runtime per install; `onPurge` drops the plugin's tables and releases content-addressed objects |
+| Lifecycle | `FileboxPlugin` mounts a runtime per install; `onConfigChanged` logs the changed keys; `onPurge` drops the plugin's tables and releases content-addressed objects |
 
 Endpoints after install and configuration (Basic auth `accessKey:secretKey`):
 
