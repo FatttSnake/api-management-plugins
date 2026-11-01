@@ -107,7 +107,7 @@
           "key": "maxFileSizeMb",
           "type": "number",
           "title": "单文件大小上限（MB）",
-          "description": "网关本身限制单请求 50MB",
+          "description": "网关本身限制单请求 200MB",
           "default": 10,
           "minimum": 1,
           "maximum": 50,

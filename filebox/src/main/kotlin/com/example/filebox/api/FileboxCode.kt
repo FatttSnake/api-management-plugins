@@ -1,10 +1,9 @@
-package com.example.filebox
+package com.example.filebox.api
 
 /**
  * Filebox business code
  *
- * Laid out the way the SDK suggests: a client error is 1xxx, a business failure 2xxx and
- * a server-side one 5xxx.
+ * Client errors are 1xxx, business failures 2xxx and server-side failures 5xxx.
  *
  * @author FatttSnake, fatttsnake@gmail.com
  * @since 1.0.0
