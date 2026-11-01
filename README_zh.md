@@ -62,7 +62,7 @@ api-management-plugins/
 | 路由注册 | `context.api().register(RouteDefinition(...)) { request -> ... }` |
 | 版本共存 | v1 的 `ping` / `version`，v2 的 `ping` / `whoami`；请求更高版本时向前兼容到最新匹配路由 |
 | 显式 OpenAPI | `OperationMetadata` + `ParameterSpec` + `ResponseSpec` + `SchemaSpec` |
-| 生命周期 | `onStart` / `onStop` / `onUninstall` 写入插件级设置 |
+| 生命周期 | `onStart` / `onStop` / `onUninstall` 写入插件级设置；`onStart` 会清除上一轮的 `stoppedAt` 标记 |
 | 描述符 / 文档 | `apiPlugin {}` 生成 `api-plugin.json`；文档由声明的元数据生成 |
 | 密钥 / 签名 | `genPluginKeys` + `signPlugin` 随 `build` 执行 |
 
@@ -94,7 +94,7 @@ api-management-plugins/
 | 配置即时生效 | 普通值每次读取都取最新；保存数据源连接后网关**自动重挂载**插件，没有单独的 reload |
 | 位置寻址 + 免登外链 | `upload` / `download` / `link` / `remove`：存储、读回、生成临时外链、删除 |
 | 内容寻址 + 去重 | `snapshot` / `readSnapshot`：相同文本只存一份，以 SHA-256 为键 |
-| 生命周期 | `FileboxPlugin` 每次安装构建一个 runtime；`onPurge` 删除插件自己的表并释放内容寻址对象 |
+| 生命周期 | `FileboxPlugin` 每次安装构建一个 runtime；`onConfigChanged` 记录变化的 key；`onPurge` 删除插件自己的表并释放内容寻址对象 |
 
 安装、配置后调用（Basic 认证 `accessKey:secretKey`）：
 

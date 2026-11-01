@@ -15,6 +15,8 @@ class EchoPlugin : ApiPlugin {
 
     override fun onStart(context: GatewayContext) {
         settings = context.settings()
+        // A mount clears the stop marker the previous unmount recorded
+        settings.remove("stoppedAt")
         settings.save("startedAt", System.currentTimeMillis().toString())
 
         val messageParameter = ParameterSpec(

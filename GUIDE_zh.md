@@ -315,6 +315,10 @@ string、integer、number、boolean 工厂。生成的 `paths` key 是完整公�
 ```kotlin
 class GeoPlugin : ApiPlugin {
     override fun onStart(context: GatewayContext) {}   // 每次挂载；在这里注册路由
+    override fun onConfigChanged(                      // 管理员保存配置且未触发重挂载
+        context: GatewayContext,
+        changedKeys: Set<String>
+    ) {}
     override fun onStop() {}                           // 每次卸载，在途请求排空之后
     override fun onUninstall() {}                      // 当前版本即将离开（升级也会触发）
     override fun onPurge() {}                          // 管理员要求删除数据的卸载
@@ -323,6 +327,9 @@ class GeoPlugin : ApiPlugin {
 
 - `onStart` 在安装、启动恢复、`reload`、数据源变更导致的重挂载、以及失败挂载后的任意保存时执行。
   不要把关键状态只放在内存里。
+- `onConfigChanged` 在管理员保存插件配置、事务提交之后，于已挂载实例上执行，参数是实际发生变化的已声明
+  key。会触发重挂载的保存不会再回调它，改由新实例的 `onStart` 感知。它在保存事务之外执行；抛异常只记日志，
+  不会撤销保存。
 - `onStop` 在在途请求排空后执行；路由、插件事件与调度会先被移除。
 - `onUninstall` 在声明版本变化或插件被移除时执行，升级也会执行。**不要在这里删数据**：每次发布升级都会跑。
 - `onPurge` 仅在管理员请求 `purgeData=true` 时执行，且在 `onStop` **之前**，此时数据源、存储和设置仍然可用。
@@ -336,7 +343,7 @@ class GeoPlugin : ApiPlugin {
 | 访问器 | 说明 |
 |---|---|
 | `api()` | 路由注册，仅在 `onStart` 期间有效 |
-| `settings()` | 插件级设置：`get`、`getSecret`、`save`、`all` |
+| `settings()` | 插件级设置：`get`、`getSecret`、`save`、`remove`、`all` |
 | `dataSources()` | 插件自有数据源：`names()`、`all()`、`get(name)` |
 | `storage()` | 插件文件区：内容寻址与位置寻址对象 |
 | `users()` / `audit()` / `events()` / `http()` / `scheduler()` | 插件作用域的平台能力 |
@@ -370,12 +377,16 @@ class GeoPlugin : ApiPlugin {
 
 - 字段类型：`string` / `text` / `number` / `boolean` / `enum` / `secret`。线上与存储中的值都是字符串。
 - `default` 只声明一次、不落库；`settings().get(key)` 在未设置时回落到它。
-- 声明的 key 归管理员所有：`settings().save(...)` 会拒绝它。未声明的 key 归插件自己（如 `startedAt`）。
+- 声明的 key 归管理员所有：`settings().save(...)` 与 `settings().remove(...)` 都会拒绝它。未声明的 key
+  归插件自己（如 `startedAt`）；`remove` 删除其中一个，删除不存在的 key 是空操作。
+- `settings().all()` 返回所有可读的非 secret 值：已存储的插件自有 key，以及声明值（未存储时回落到默认值）。
+  secret 永不出现。
 - secret 加密存储，管理接口永不回传明文：`value` 为 `null`，`hasValue` 表示是否已设置。保存时不传该 key
   表示保持原值，传空表示清除；`settings().getSecret(key)` 读回明文。
 - MySQL 数据源在 **host 与 database 都有值**后才算配置完成；任一留空即取消配置，不算错误。
   SQLite 数据源不需要任何配置。没有 `datasources` 声明就不会注入任何数据源。
-- 普通值在下一次读取时生效，无需重挂载；保存数据源连接项会**重挂载**插件，因为连接由网关构建。
+- 普通值在下一次读取时生效，无需重挂载；已挂载实例会通过 `onConfigChanged` 收到实际变化的已声明 key。
+  保存数据源连接项会**重挂载**插件，因为连接由网关构建，新实例在 `onStart` 中读取新值。
 - [`docs/plugin-config.schema.json`](https://github.com/FatttSnake/api-management/blob/master/docs/plugin-config.schema.json)
   镜像了这些校验，可用于编辑器与 CI。不要在文件里加 `$schema`：网关只接受顶层 `groups` 与 `datasources`。
 
