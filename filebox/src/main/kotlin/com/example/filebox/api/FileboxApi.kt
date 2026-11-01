@@ -9,7 +9,9 @@ import top.fatweb.apimanagement.api.v1.ApiRoutes
 import top.fatweb.apimanagement.api.v1.OperationMetadata
 import top.fatweb.apimanagement.api.v1.ParameterLocation
 import top.fatweb.apimanagement.api.v1.ParameterSpec
+import top.fatweb.apimanagement.api.v1.ResponseSpec
 import top.fatweb.apimanagement.api.v1.RouteDefinition
+import top.fatweb.apimanagement.api.v1.SchemaSpec
 
 /**
  * HTTP surface of the filebox plugin.
@@ -57,6 +59,11 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                             description = "上传令牌，配置要求时必填",
                             example = "upload-token"
                         )
+                    ),
+                    responses = successResponse(
+                        fileSchema(),
+                        fileExample(),
+                        "<1000>参数无效 <1001>未登录 <2004>上传令牌不匹配 <2005>文件过大 <5001>数据源未配置"
                     )
                 )
             ),
@@ -89,6 +96,11 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                             format = "int64",
                             example = DEFAULT_PAGE_SIZE
                         )
+                    ),
+                    responses = successResponse(
+                        filePageSchema(),
+                        filePageExample(),
+                        "<1000>参数无效 <1001>未登录 <5001>数据源未配置"
                     )
                 )
             ),
@@ -103,7 +115,8 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                     "download",
                     "下载文件",
                     "读回原样字节（位置寻址的对象不做压缩）",
-                    listOf(fileIdParameter())
+                    listOf(fileIdParameter()),
+                    responses = downloadResponse()
                 )
             ),
             ::download
@@ -128,6 +141,11 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                             format = "int64",
                             example = 24
                         )
+                    ),
+                    responses = successResponse(
+                        linkSchema(),
+                        linkExample(),
+                        "<1000>参数无效 <1001>未登录 <2001>文件不存在 <2002>无权访问 <5001>数据源未配置 <5002>外链不可用"
                     )
                 )
             ),
@@ -142,7 +160,12 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                     "remove",
                     "删除文件",
                     "删除元数据与原样字节，已发出的外链随之失效",
-                    listOf(fileIdParameter())
+                    listOf(fileIdParameter()),
+                    responses = successResponse(
+                        removeSchema(),
+                        removeExample(),
+                        "<1000>参数无效 <1001>未登录 <2001>文件不存在 <2002>无权访问 <5001>数据源未配置"
+                    )
                 )
             ),
             ::remove
@@ -163,8 +186,13 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                             type = "string",
                             required = true,
                             description = "快照文本内容",
-                            example = "hello"
+                            example = EXAMPLE_TEXT
                         )
+                    ),
+                    responses = successResponse(
+                        snapshotSchema(),
+                        snapshotExample(),
+                        "<1000>参数无效 <1001>未登录 <2003>快照未启用 <5001>数据源未配置"
                     )
                 )
             ),
@@ -186,8 +214,13 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                             type = "string",
                             required = true,
                             description = "内容 SHA-256",
-                            example = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                            example = EXAMPLE_CONTENT_KEY
                         )
+                    ),
+                    responses = successResponse(
+                        readSnapshotSchema(),
+                        readSnapshotExample(),
+                        "<1000>参数无效 <1001>未登录 <2002>无权访问 <2006>快照不存在 <5001>数据源未配置"
                     )
                 )
             ),
@@ -232,7 +265,7 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
                 url = url,
                 expiresInHours = hours,
                 notice = settings.publicNotice(),
-                warning = "外链是免登凭证，持有者在过期前均可访问，且无法提前吊销"
+                warning = LINK_WARNING
             )
         )
     }
@@ -265,6 +298,144 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
             )
         )
     }
+
+    private fun successResponse(
+        data: SchemaSpec,
+        dataExample: Any,
+        failureCodes: String
+    ): Map<String, ResponseSpec> = mapOf(
+        "200" to ResponseSpec(
+            description = "成功",
+            schema = SchemaSpec.objectOf(
+                properties = mapOf(
+                    "code" to SchemaSpec.integer("业务码: <0>成功 $failureCodes", example = 0),
+                    "success" to SchemaSpec.boolean("是否成功", example = true),
+                    "msg" to SchemaSpec.string("提示信息", example = "success"),
+                    "data" to data.copy(nullable = true)
+                ),
+                required = listOf("code", "success", "msg", "data")
+            ),
+            example = mapOf(
+                "code" to 0,
+                "success" to true,
+                "msg" to "success",
+                "data" to dataExample
+            )
+        )
+    )
+
+    private fun downloadResponse(): Map<String, ResponseSpec> = mapOf(
+        "200" to ResponseSpec(
+            description = "成功",
+            schema = SchemaSpec.string("文件内容", format = "binary"),
+            mediaType = "application/octet-stream"
+        )
+    )
+
+    private fun fileSchema(): SchemaSpec = SchemaSpec.objectOf(
+        properties = mapOf(
+            "id" to SchemaSpec.string("文件 ID", example = EXAMPLE_FILE_ID),
+            "name" to SchemaSpec.string("原始文件名", example = EXAMPLE_FILE_NAME),
+            "size" to SchemaSpec.integer("字节数", format = "int64", example = EXAMPLE_FILE_SIZE),
+            "path" to SchemaSpec.string(
+                "插件存储命名空间内的相对路径",
+                example = "files/1/$EXAMPLE_FILE_ID.pdf"
+            ),
+            "createTime" to SchemaSpec.integer(
+                "上传时间（epoch 毫秒）",
+                format = "int64",
+                example = EXAMPLE_CREATE_TIME
+            )
+        ),
+        required = listOf("id", "name", "size", "path", "createTime")
+    )
+
+    private fun fileExample(): Map<String, Any> = mapOf(
+        "id" to EXAMPLE_FILE_ID,
+        "name" to EXAMPLE_FILE_NAME,
+        "size" to EXAMPLE_FILE_SIZE,
+        "path" to "files/1/$EXAMPLE_FILE_ID.pdf",
+        "createTime" to EXAMPLE_CREATE_TIME
+    )
+
+    private fun filePageSchema(): SchemaSpec = SchemaSpec.objectOf(
+        properties = mapOf(
+            "records" to SchemaSpec.array(fileSchema(), "当前页文件"),
+            "total" to SchemaSpec.integer("匹配的文件总数", format = "int64", example = 1),
+            "page" to SchemaSpec.integer("页码，从 1 开始", format = "int64", example = 1),
+            "size" to SchemaSpec.integer("每页条数", format = "int64", example = DEFAULT_PAGE_SIZE)
+        ),
+        required = listOf("records", "total", "page", "size")
+    )
+
+    private fun filePageExample(): Map<String, Any> = mapOf(
+        "records" to listOf(fileExample()),
+        "total" to 1L,
+        "page" to 1L,
+        "size" to DEFAULT_PAGE_SIZE
+    )
+
+    private fun linkSchema(): SchemaSpec = SchemaSpec.objectOf(
+        properties = mapOf(
+            "url" to SchemaSpec.string("免登外链", example = EXAMPLE_EXTERNAL_URL),
+            "expiresInHours" to SchemaSpec.integer("外链有效期（小时）", format = "int64", example = 24),
+            "notice" to SchemaSpec.string(
+                "分享提示语，未配置时为 null",
+                example = EXAMPLE_NOTICE,
+                nullable = true
+            ),
+            "warning" to SchemaSpec.string("外链凭证提醒", example = LINK_WARNING)
+        ),
+        required = listOf("url", "expiresInHours", "warning")
+    )
+
+    private fun linkExample(): Map<String, Any> = mapOf(
+        "url" to EXAMPLE_EXTERNAL_URL,
+        "expiresInHours" to 24L,
+        "notice" to EXAMPLE_NOTICE,
+        "warning" to LINK_WARNING
+    )
+
+    private fun removeSchema(): SchemaSpec = SchemaSpec.objectOf(
+        properties = mapOf(
+            "id" to SchemaSpec.string("被删除的文件 ID", example = EXAMPLE_FILE_ID),
+            "deleted" to SchemaSpec.boolean("是否已删除", example = true)
+        ),
+        required = listOf("id", "deleted")
+    )
+
+    private fun removeExample(): Map<String, Any> = mapOf(
+        "id" to EXAMPLE_FILE_ID,
+        "deleted" to true
+    )
+
+    private fun snapshotSchema(): SchemaSpec = SchemaSpec.objectOf(
+        properties = mapOf(
+            "contentKey" to SchemaSpec.string("内容 SHA-256，同时也是存储键", example = EXAMPLE_CONTENT_KEY),
+            "size" to SchemaSpec.integer("内容字节数", format = "int64", example = 5),
+            "deduplicated" to SchemaSpec.boolean("内容此前是否已存在", example = false)
+        ),
+        required = listOf("contentKey", "size", "deduplicated")
+    )
+
+    private fun snapshotExample(): Map<String, Any> = mapOf(
+        "contentKey" to EXAMPLE_CONTENT_KEY,
+        "size" to 5L,
+        "deduplicated" to false
+    )
+
+    private fun readSnapshotSchema(): SchemaSpec = SchemaSpec.objectOf(
+        properties = mapOf(
+            "contentKey" to SchemaSpec.string("内容 SHA-256", example = EXAMPLE_CONTENT_KEY),
+            "text" to SchemaSpec.string("快照文本", example = EXAMPLE_TEXT)
+        ),
+        required = listOf("contentKey", "text")
+    )
+
+    private fun readSnapshotExample(): Map<String, Any> = mapOf(
+        "contentKey" to EXAMPLE_CONTENT_KEY,
+        "text" to EXAMPLE_TEXT
+    )
 
     private fun requireUser(request: ApiRequest): Long =
         request.principal?.userId
@@ -300,11 +471,24 @@ class FileboxApi(private val settings: FileboxSettings, private val service: Fil
             type = "string",
             required = true,
             description = "文件 ID",
-            example = "1"
+            example = EXAMPLE_FILE_ID
         )
 
     private companion object {
         const val DEFAULT_PAGE_SIZE = 20L
         const val MAX_PAGE_SIZE = 100L
+
+        const val EXAMPLE_FILE_ID = "5d8f3c21-9a4e-4b7d-8c16-e2a7b9d05f43"
+        const val EXAMPLE_FILE_NAME = "report.pdf"
+        const val EXAMPLE_FILE_SIZE = 1024L
+        const val EXAMPLE_CREATE_TIME = 1767225600000L
+        const val EXAMPLE_NOTICE = "仅限内部流转"
+        const val EXAMPLE_CONTENT_KEY =
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        const val EXAMPLE_TEXT = "hello"
+        const val EXAMPLE_EXTERNAL_URL =
+            "https://files.example.com/public/storage/filebox/files/1/$EXAMPLE_FILE_ID.pdf" +
+                "?e=1767229200&s=abc123"
+        const val LINK_WARNING = "外链是免登凭证，持有者在过期前均可访问，且无法提前吊销"
     }
 }
