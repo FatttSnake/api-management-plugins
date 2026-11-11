@@ -1,8 +1,8 @@
 pluginManagement {
     repositories {
+        maven("https://nexus.fatweb.top/repository/maven-public/")
         mavenCentral()
         gradlePluginPortal()
-        mavenLocal()   // top.fatweb.api-plugin and the gateway-api snapshot are published here
     }
 }
 
