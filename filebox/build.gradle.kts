@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.example"
-version = "1.0.0-SNAPSHOT"
+version = "1.0.0"
 
 dependencies {
     // Locked and shipped as plugin modules; the gateway only provides gateway-api.
