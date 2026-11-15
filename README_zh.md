@@ -23,7 +23,7 @@
 api-management-plugins/
 ├─ echo/                        # 最小示例插件（独立 Gradle 工程）
 │  ├─ build.gradle.kts          # kotlin jvm + id("top.fatweb.api-plugin") + apiPlugin{...}
-│  ├─ settings.gradle.kts       # pluginManagement 含 mavenLocal（Gradle 插件 / gateway-api）
+│  ├─ settings.gradle.kts       # pluginManagement 含 Nexus 仓库（Gradle 插件 / gateway-api）
 │  ├─ keys/                     # 首次 build 自动生成（private.pem 勿提交）
 │  └─ src/main/kotlin/com/example/echo/
 │     ├─ EchoPlugin.kt          # ApiPlugin：v1/v2 路由、元数据、生命周期钩子
@@ -126,9 +126,13 @@ PUT  /system/api/plugin/config
 
 # 快速开始
 
-### 0. 发布契约与工具链（一次性）
+### 0. 解析契约与工具链
 
-在 [api-management](https://github.com/FatttSnake/api-management)（网关）仓库执行：
+`top.fatweb.api-plugin` 与 `top.fatweb:api-management-gateway-api` 已发布到
+`https://nexus.fatweb.top/repository/maven-public/`，两个示例工程都已在 `settings.gradle.kts`
+中声明该仓库。如需针对未发布的网关版本构建，在
+[api-management](https://github.com/FatttSnake/api-management)（网关）仓库将其发布到本地 Maven
+仓库，并在 `pluginManagement` 中追加 `mavenLocal()`：
 
 ```shell
 ./gradlew :gateway-api:publishToMavenLocal :plugin-signing:publishToMavenLocal :plugin-gradle-plugin:publishToMavenLocal
@@ -174,7 +178,11 @@ curl -u "<accessKey>:<secretKey>" http://<gateway>/api/echo/v2/ping
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
-    repositories { mavenCentral(); gradlePluginPortal(); mavenLocal() }
+    repositories {
+        maven("https://nexus.fatweb.top/repository/maven-public/")
+        mavenCentral()
+        gradlePluginPortal()
+    }
 }
 rootProject.name = "geo-plugin"
 ```
@@ -183,7 +191,7 @@ rootProject.name = "geo-plugin"
 // build.gradle.kts —— 全部构建配置
 plugins {
     kotlin("jvm") version "2.3.21"
-    id("top.fatweb.api-plugin") version "1.0.0-SNAPSHOT"
+    id("top.fatweb.api-plugin") version "1.0.0"
 }
 version = "1.0.0"
 
@@ -220,7 +228,7 @@ class GeoPlugin : ApiPlugin {
 # 环境要求
 
 - **JDK 25+**
-- `top.fatweb.api-plugin` 与 `top.fatweb:api-management-gateway-api:1.0.0-SNAPSHOT` 可解析（本地 `mavenLocal` 或私有镜像）
+- `top.fatweb.api-plugin` 与 `top.fatweb:api-management-gateway-api:1.0.0` 可从 `https://nexus.fatweb.top/repository/maven-public/` 解析
 - 首次构建自动下载 Gradle wrapper，无需预装 Gradle
 
 # 关联项目

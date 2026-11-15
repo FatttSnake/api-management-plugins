@@ -23,7 +23,7 @@ This repository is the **development workspace** for plugins: **every subdirecto
 api-management-plugins/
 ├─ echo/                        # minimal example plugin (standalone Gradle project)
 │  ├─ build.gradle.kts          # kotlin jvm + id("top.fatweb.api-plugin") + apiPlugin{...}
-│  ├─ settings.gradle.kts       # pluginManagement includes mavenLocal (Gradle plugin / gateway-api)
+│  ├─ settings.gradle.kts       # pluginManagement includes the Nexus repo (Gradle plugin / gateway-api)
 │  ├─ keys/                     # auto-generated on first build (never commit private.pem)
 │  └─ src/main/kotlin/com/example/echo/
 │     ├─ EchoPlugin.kt          # ApiPlugin: v1/v2 routes, metadata, lifecycle hooks
@@ -126,9 +126,14 @@ PUT  /system/api/plugin/config
 
 # Quick start
 
-### 0. Publish the contract and tooling (once)
+### 0. Resolve the contract and tooling
 
-In the [api-management](https://github.com/FatttSnake/api-management) (gateway) repository:
+`top.fatweb.api-plugin` and `top.fatweb:api-management-gateway-api` are published to
+`https://nexus.fatweb.top/repository/maven-public/`; both example projects already declare that
+repository in `settings.gradle.kts`. To build against an unreleased gateway revision instead,
+publish it to your local Maven repository from the
+[api-management](https://github.com/FatttSnake/api-management) (gateway) repository and add
+`mavenLocal()`:
 
 ```shell
 ./gradlew :gateway-api:publishToMavenLocal :plugin-signing:publishToMavenLocal :plugin-gradle-plugin:publishToMavenLocal
@@ -177,7 +182,11 @@ Create a directory (e.g. `geo/`) with the two files below plus your Kotlin sourc
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
-    repositories { mavenCentral(); gradlePluginPortal(); mavenLocal() }
+    repositories {
+        maven("https://nexus.fatweb.top/repository/maven-public/")
+        mavenCentral()
+        gradlePluginPortal()
+    }
 }
 rootProject.name = "geo-plugin"
 ```
@@ -186,7 +195,7 @@ rootProject.name = "geo-plugin"
 // build.gradle.kts — the whole build config
 plugins {
     kotlin("jvm") version "2.3.21"
-    id("top.fatweb.api-plugin") version "1.0.0-SNAPSHOT"
+    id("top.fatweb.api-plugin") version "1.0.0"
 }
 version = "1.0.0"
 
@@ -224,7 +233,7 @@ For the full DSL reference, the dependency lock and `sharedLoader` rules, see
 # Requires
 
 - **JDK 25+**
-- `top.fatweb.api-plugin` and `top.fatweb:api-management-gateway-api:1.0.0-SNAPSHOT` resolvable (local `mavenLocal` or a private mirror)
+- `top.fatweb.api-plugin` and `top.fatweb:api-management-gateway-api:1.0.0` resolvable from `https://nexus.fatweb.top/repository/maven-public/`
 - The Gradle wrapper downloads on first build; no pre-installed Gradle needed
 
 # Related projects
