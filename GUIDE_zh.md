@@ -11,17 +11,17 @@
 
 ---
 
-## 0. 前置：发布契约与 Gradle 插件
+## 0. 前置：解析契约与 Gradle 插件
 
-Gradle 插件与契约都从**网关仓库**构建发布。首次使用前，在 [api-management](https://github.com/FatttSnake/api-management) 仓库执行一次：
+`top.fatweb.api-plugin` 与 `top.fatweb:api-management-gateway-api` 已发布到项目 Nexus 仓库 `https://nexus.fatweb.top/repository/maven-public/`，按 §2.1 在 `pluginManagement` 中声明后即可解析。
+
+如需针对未发布的网关版本构建，可在 [api-management](https://github.com/FatttSnake/api-management) 仓库将其发布到本地 Maven 仓库：
 
 ```shell
 ./gradlew :gateway-api:publishToMavenLocal :plugin-signing:publishToMavenLocal :plugin-gradle-plugin:publishToMavenLocal
 ```
 
-插件工程在 `settings.gradle.kts` 的 `pluginManagement` 里加入 `mavenLocal()` 即可解析；使用私有 Nexus 时同样加上对应仓库。
-
-拉取新版网关后重新执行一次，确保 Gradle 插件及其 task 是最新的。
+并在 `pluginManagement` 中追加 `mavenLocal()`。拉取新版网关后重新执行一次，确保 Gradle 插件及其 task 是最新的。
 
 ---
 
@@ -71,9 +71,10 @@ geo/
 ```kotlin
 pluginManagement {
     repositories {
+        maven("https://nexus.fatweb.top/repository/maven-public/")   // top.fatweb.api-plugin 与 gateway-api
         mavenCentral()
         gradlePluginPortal()
-        mavenLocal()   // 解析 top.fatweb.api-plugin 与 gateway-api snapshot
+        // mavenLocal()   // 针对未发布的网关版本构建时追加
     }
 }
 
@@ -85,7 +86,7 @@ rootProject.name = "geo-plugin"
 ```kotlin
 plugins {
     kotlin("jvm") version "2.3.21"
-    id("top.fatweb.api-plugin") version "1.0.0-SNAPSHOT"
+    id("top.fatweb.api-plugin") version "1.0.0"
 }
 
 version = "1.0.0"                                 // 也是默认 versionName
@@ -98,7 +99,7 @@ apiPlugin {
     author = "你的名字"                             // 可选
     mainClass = "com.example.geo.GeoPlugin"       // 必填：ApiPlugin 实现
     requiresGateway = ">=1.0.0 <2.0.0"            // 默认值
-    requiresGatewayApi = ">=1.0.0-SNAPSHOT <2.0.0" // 默认 ^1.0
+    requiresGatewayApi = ">=1.0.0 <2.0.0"         // 默认 ^1.0
 }
 ```
 
@@ -175,7 +176,7 @@ Gradle 插件在构建期从 `apiPlugin { }` 生成。`echo/` 的产物形如：
   "author": "FatttSnake",
   "mainClass": "com.example.echo.EchoPlugin",
   "requiresGateway": ">=1.0.0 <2.0.0",
-  "requiresGatewayApi": ">=1.0.0-SNAPSHOT <2.0.0"
+  "requiresGatewayApi": ">=1.0.0 <2.0.0"
 }
 ```
 

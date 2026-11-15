@@ -1,6 +1,6 @@
 plugins {
     kotlin("jvm") version "2.3.21"
-    id("top.fatweb.api-plugin") version "1.0.0-SNAPSHOT"
+    id("top.fatweb.api-plugin") version "1.0.0"
 }
 
 group = "com.example"
@@ -14,5 +14,5 @@ apiPlugin {
     author = "FatttSnake"
     mainClass = "com.example.echo.EchoPlugin"
     requiresGateway = ">=1.0.0 <2.0.0"
-    requiresGatewayApi = ">=1.0.0-SNAPSHOT <2.0.0"
+    requiresGatewayApi = ">=1.0.0 <2.0.0"
 }

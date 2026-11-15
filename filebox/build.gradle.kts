@@ -1,6 +1,6 @@
 plugins {
     kotlin("jvm") version "2.3.21"
-    id("top.fatweb.api-plugin") version "1.0.0-SNAPSHOT"
+    id("top.fatweb.api-plugin") version "1.0.0"
 }
 
 group = "com.example"
@@ -26,7 +26,7 @@ apiPlugin {
     author = "FatttSnake"
     mainClass = "com.example.filebox.FileboxPlugin"
     requiresGateway = ">=1.0.0 <2.0.0"
-    requiresGatewayApi = ">=1.0.0-SNAPSHOT <2.0.0"
+    requiresGatewayApi = ">=1.0.0 <2.0.0"
 
     // Flyway resolves database types through a static ServiceLoader registry bound to the
     // loader that defined flyway-core; the MySQL support lives in flyway-mysql.
