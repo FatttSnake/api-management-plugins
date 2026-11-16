@@ -1,6 +1,6 @@
 plugins {
     kotlin("jvm") version "2.3.21"
-    id("top.fatweb.api-plugin") version "1.0.0"
+    id("top.fatweb.api-plugin") version "1.0.1"
 }
 
 group = "com.example"
