@@ -4,12 +4,12 @@ plugins {
 }
 
 group = "com.example"
-version = "1.0.1"
+version = "1.0.2-SNAPSHOT"
 
 apiPlugin {
     pluginId = "echo"
     pluginName = "Echo 插件"
-    versionCode = 1000001
+    versionCode = 1000002
     description = "Echo 插件，演示 API 插件热插拔全流程（安装/升级/卸载/禁用/签名/文档）"
     author = "FatttSnake"
     mainClass = "com.example.echo.EchoPlugin"
